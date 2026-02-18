@@ -1,7 +1,5 @@
 # Epstein Ranker
 
-**Live Site: [https://epsteingate.org](https://epsteingate.org)**
-
 LLM-powered tooling for triaging Epstein-related document corpora.
 This project:
 
