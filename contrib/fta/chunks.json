@@ -28,6 +28,12 @@
     {
       "start_row": 1,
       "end_row": 1000,
+      "json": "contrib/fta/VOL00002/epstein_ranked_00001_01000.jsonl",
+      "row_count": 573
+    },
+    {
+      "start_row": 1,
+      "end_row": 1000,
       "json": "contrib/fta/VOL00003/epstein_ranked_00001_01000.jsonl"
     },
     {
@@ -115,6 +121,12 @@
       "end_row": 11000,
       "json": "contrib/fta/VOL00008/epstein_ranked_10001_11000.jsonl",
       "row_count": 614
+    },
+    {
+      "start_row": 1,
+      "end_row": 1000,
+      "json": "contrib/fta/VOL00010/epstein_ranked_00001_01000.jsonl",
+      "row_count": 399
     },
     {
       "start_row": 1,
