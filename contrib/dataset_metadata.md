@@ -5,7 +5,6 @@ This dataset contains ranked and analyzed documents from the **U.S. House Oversi
 
 **Original Source:** "20,000 Epstein Files" corpus by [tensonaut](https://huggingface.co/datasets/tensonaut/EPSTEIN_FILES_20K).
 **Project Site:** [https://epsteingate.org](https://epsteingate.org)
-**Repository:** [https://github.com/latent-variable/epstein-ranker-deploy](https://github.com/latent-variable/epstein-ranker-deploy)
 
 ## Methodology
 The documents were processed using an LLM to extract structured data and assign an **importance score** (0-100). The scoring criteria focused on:
