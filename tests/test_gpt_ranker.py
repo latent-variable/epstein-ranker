@@ -524,6 +524,13 @@ class GptRankerHelpersTest(unittest.TestCase):
         self.assertIn(("chat", "http://localhost:5002/v1"), targets)
         self.assertIn(("chat", "http://localhost:5555/api/v1"), targets)
 
+    def test_build_request_targets_normalizes_full_chat_route(self) -> None:
+        targets = gpt_ranker.build_request_targets(
+            "https://example.com/v1/chat/completions",
+            "openai",
+        )
+        self.assertEqual(targets, [("openai", "https://example.com/v1")])
+
     def test_call_model_chat_mode_parses_output(self) -> None:
         response_payload = {
             "output": [
@@ -655,6 +662,100 @@ class GptRankerHelpersTest(unittest.TestCase):
                 config_metadata=None,
             )
         self.assertEqual(result["headline"], "h")
+
+    def test_call_model_openai_omits_metadata_for_non_openrouter_endpoints(self) -> None:
+        response_payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"headline":"h","importance_score":1,"reason":"r",'
+                            '"key_insights":[],"tags":[],"power_mentions":[],'
+                            '"agency_involvement":[],"lead_types":[]}'
+                        )
+                    }
+                }
+            ]
+        }
+
+        captured_payload = {}
+
+        def side_effect(*, url, payload, api_key, extra_headers, timeout):
+            captured_payload.update(payload)
+            return response_payload
+
+        with mock.patch.object(gpt_ranker, "post_request", side_effect=side_effect):
+            result = gpt_ranker.call_model(
+                endpoint="https://api.example.com/v1",
+                api_format="openai",
+                model="qwen/qwen3-vl-30b",
+                filename="DataSet3/EFTA00004066.pdf",
+                text="text",
+                input_kind="text",
+                image_path=None,
+                image_max_pages=1,
+                image_render_dpi=120,
+                system_prompt="Return JSON",
+                api_key="test-key",
+                timeout=30,
+                max_retries=1,
+                retry_backoff=0,
+                temperature=0.0,
+                max_output_tokens=256,
+                reasoning_effort=None,
+                image_detail="low",
+                config_metadata={"source": "test"},
+            )
+
+        self.assertEqual(result["headline"], "h")
+        self.assertNotIn("metadata", captured_payload)
+
+    def test_call_model_openai_includes_metadata_for_openrouter(self) -> None:
+        response_payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"headline":"h","importance_score":1,"reason":"r",'
+                            '"key_insights":[],"tags":[],"power_mentions":[],'
+                            '"agency_involvement":[],"lead_types":[]}'
+                        )
+                    }
+                }
+            ]
+        }
+
+        captured_payload = {}
+
+        def side_effect(*, url, payload, api_key, extra_headers, timeout):
+            captured_payload.update(payload)
+            return response_payload
+
+        with mock.patch.object(gpt_ranker, "post_request", side_effect=side_effect):
+            result = gpt_ranker.call_model(
+                endpoint="https://openrouter.ai/api/v1",
+                api_format="openai",
+                model="qwen/qwen3-vl-30b-a3b-instruct",
+                filename="DataSet3/EFTA00004066.pdf",
+                text="text",
+                input_kind="text",
+                image_path=None,
+                image_max_pages=1,
+                image_render_dpi=120,
+                system_prompt="Return JSON",
+                api_key="test-key",
+                timeout=30,
+                max_retries=1,
+                retry_backoff=0,
+                temperature=0.0,
+                max_output_tokens=256,
+                reasoning_effort=None,
+                image_detail="low",
+                config_metadata={"source": "test"},
+            )
+
+        self.assertEqual(result["headline"], "h")
+        self.assertEqual(captured_payload.get("metadata"), {"source": "test"})
 
     def test_attach_request_usage_and_cost_estimates_from_prices(self) -> None:
         result = {

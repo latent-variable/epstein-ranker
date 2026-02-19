@@ -26,9 +26,13 @@ DATASET_METADATA_FILE="$SCRIPT_DIR/data/dataset_profiles/standardworks_epstein_f
 GIT_OUTPUT_ROOT="contrib/fta"
 TRACK_CHUNKS_IN_GIT=1
 
-ENDPOINT="http://localhost:8000/v1"
+LOCAL_DEFAULT_ENDPOINT="http://localhost:5555/v1"
+LOCAL_DEFAULT_MODEL="qwen/qwen3-vl-30b"
+OPENROUTER_DEFAULT_ENDPOINT="https://openrouter.ai/api/v1"
+
+ENDPOINT="${ENDPOINT:-$LOCAL_DEFAULT_ENDPOINT}"
 API_FORMAT="openai"
-MODEL="/model"
+MODEL="${MODEL:-$LOCAL_DEFAULT_MODEL}"
 PROVIDER="local"
 OPENROUTER_MODEL="qwen/qwen3-vl-30b-a3b-instruct"
 OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
@@ -110,7 +114,7 @@ Model/runtime options:
   --openrouter-no-fallbacks  Disable OpenRouter provider fallback routing (default)
   --openrouter-allow-fallbacks
                              Allow OpenRouter provider fallback routing
-  --parallel N               Max parallel requests (default: 4)
+  --parallel N               Max parallel requests (default: 8)
   --parallel-scheduling MODE auto | window | batch (default: batch)
   --image-prefetch N         Extra queued image tasks beyond --parallel (default: 0)
   --image-max-pages N        Max rendered PDF pages per document (default: 128)
@@ -584,25 +588,11 @@ trap cleanup_temp EXIT
 
 if [[ "$PROVIDER" == "openrouter" ]]; then
   API_FORMAT="openai"
-  if (( ENDPOINT_EXPLICIT == 0 )); then
-    ENDPOINT="https://openrouter.ai/api/v1"
+  if (( ENDPOINT_EXPLICIT == 0 )) && [[ "$ENDPOINT" == "$LOCAL_DEFAULT_ENDPOINT" ]]; then
+    ENDPOINT="$OPENROUTER_DEFAULT_ENDPOINT"
   fi
-  if (( MODEL_EXPLICIT == 0 )); then
+  if (( MODEL_EXPLICIT == 0 )) && [[ "$MODEL" == "$LOCAL_DEFAULT_MODEL" ]]; then
     MODEL="$OPENROUTER_MODEL"
-  fi
-  if [[ -z "$API_KEY" ]]; then
-    API_KEY="$OPENROUTER_API_KEY"
-  fi
-  if [[ -z "$HTTP_REFERER" ]]; then
-    HTTP_REFERER="$OPENROUTER_REFERER"
-  fi
-  if [[ -z "$X_TITLE" ]]; then
-    X_TITLE="$OPENROUTER_TITLE"
-  fi
-  if [[ -z "$API_KEY" ]] && (( ! DRY_RUN )); then
-    echo "OpenRouter provider selected but no API key found." >&2
-    echo "Use --openrouter-api-key, --api-key, or set OPENROUTER_API_KEY." >&2
-    exit 1
   fi
 
   # Hosted inference benefits from keeping request slots full while preparing the next jobs.
@@ -617,6 +607,28 @@ if [[ "$PROVIDER" == "openrouter" ]]; then
     OUTPUT_PRICE_PER_1M="$OPENROUTER_DEFAULT_OUTPUT_PRICE_PER_1M"
     CACHE_READ_PRICE_PER_1M="$OPENROUTER_DEFAULT_CACHE_READ_PRICE_PER_1M"
     CACHE_WRITE_PRICE_PER_1M="$OPENROUTER_DEFAULT_CACHE_WRITE_PRICE_PER_1M"
+  fi
+fi
+
+IS_OPENROUTER_ENDPOINT=0
+if [[ "$ENDPOINT" == *"openrouter.ai"* ]]; then
+  IS_OPENROUTER_ENDPOINT=1
+fi
+
+if (( IS_OPENROUTER_ENDPOINT )); then
+  if [[ -z "$API_KEY" ]]; then
+    API_KEY="$OPENROUTER_API_KEY"
+  fi
+  if [[ -z "$HTTP_REFERER" ]]; then
+    HTTP_REFERER="$OPENROUTER_REFERER"
+  fi
+  if [[ -z "$X_TITLE" ]]; then
+    X_TITLE="$OPENROUTER_TITLE"
+  fi
+  if [[ -z "$API_KEY" ]] && (( ! DRY_RUN )); then
+    echo "OpenRouter endpoint selected but no API key found." >&2
+    echo "Use --openrouter-api-key, --api-key, or set OPENROUTER_API_KEY." >&2
+    exit 1
   fi
 fi
 
@@ -635,7 +647,7 @@ echo "Workspace root: $WORKSPACE_ROOT"
 echo "Provider: $PROVIDER"
 echo "Model: $MODEL"
 echo "Endpoint: $ENDPOINT"
-if [[ "$PROVIDER" == "openrouter" && -n "$OPENROUTER_PROVIDER" ]]; then
+if (( IS_OPENROUTER_ENDPOINT )) && [[ -n "$OPENROUTER_PROVIDER" ]]; then
   if [[ "$OPENROUTER_NO_FALLBACKS" == "1" ]]; then
     echo "OpenRouter route: provider=$OPENROUTER_PROVIDER | fallbacks=disabled"
   else
@@ -713,10 +725,10 @@ for vol in "${VOLUMES[@]}"; do
   if [[ -n "$X_TITLE" ]]; then
     CMD+=(--x-title "$X_TITLE")
   fi
-  if [[ -n "$OPENROUTER_PROVIDER" ]]; then
+  if (( IS_OPENROUTER_ENDPOINT )) && [[ -n "$OPENROUTER_PROVIDER" ]]; then
     CMD+=(--openrouter-provider "$OPENROUTER_PROVIDER")
   fi
-  if [[ "$OPENROUTER_NO_FALLBACKS" == "1" ]]; then
+  if (( IS_OPENROUTER_ENDPOINT )) && [[ "$OPENROUTER_NO_FALLBACKS" == "1" ]]; then
     CMD+=(--openrouter-no-fallbacks)
   fi
   if (( RESUME )); then

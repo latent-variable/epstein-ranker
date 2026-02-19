@@ -131,13 +131,22 @@ def derive_localhost_fallback_endpoints(endpoint: str) -> List[str]:
     return [candidate for candidate in candidates if candidate != normalized]
 
 
+def normalize_endpoint_base(endpoint: str) -> str:
+    normalized = endpoint.strip().rstrip("/")
+    lowered = normalized.lower()
+    for suffix in ("/chat/completions", "/chat"):
+        if lowered.endswith(suffix):
+            return normalized[: -len(suffix)]
+    return normalized
+
+
 def build_request_targets(
     endpoint: str,
     api_format: str,
     *,
     prefer_openai: bool = False,
 ) -> List[Tuple[str, str]]:
-    normalized = endpoint.rstrip("/")
+    normalized = normalize_endpoint_base(endpoint)
     targets: List[Tuple[str, str]] = []
 
     if api_format == "openai":
@@ -979,7 +988,10 @@ def call_model(
                         }
                         if reasoning_effort:
                             payload["reasoning"] = {"effort": reasoning_effort}
-                        if config_metadata:
+                        # Some OpenAI-compatible servers (for example strict vLLM deployments)
+                        # reject unknown top-level fields like "metadata". Keep request payloads
+                        # minimal unless targeting providers known to accept the field.
+                        if config_metadata and "openrouter.ai" in base_url:
                             payload["metadata"] = config_metadata
                         provider_preferences: Optional[Dict[str, Any]] = None
                         if "openrouter.ai" in base_url:
