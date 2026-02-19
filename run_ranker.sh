@@ -69,6 +69,9 @@ START_ROW=""
 END_ROW=""
 START_PDF=""
 END_PDF=""
+FAILURE_LOG_PATH=""
+ONLY_SOURCE_IDS_FILE=""
+RETRY_FAILED_LOCAL=0
 INPUT_PRICE_PER_1M="${INPUT_PRICE_PER_1M:-}"
 OUTPUT_PRICE_PER_1M="${OUTPUT_PRICE_PER_1M:-}"
 CACHE_READ_PRICE_PER_1M="${CACHE_READ_PRICE_PER_1M:-}"
@@ -144,6 +147,9 @@ Model/runtime options:
   --end-row N                End at 1-based source row index (inclusive)
   --start-pdf N              Start at 1-based PDF file index (pre-split)
   --end-pdf N                End at 1-based PDF file index (inclusive, pre-split)
+  --failure-log PATH         JSONL log path for failed rows (auto for OpenRouter if omitted)
+  --only-source-ids-file P   Process only source_id values listed in a file
+  --retry-failed-local       After OpenRouter pass, rerun failed source IDs locally
   --max-rows N               Limit rows for smoke test per volume
 
 Control options:
@@ -161,6 +167,7 @@ Examples:
   ./run_ranker.sh --provider openrouter --openrouter-provider alibaba --openrouter-no-fallbacks --volumes 1
   ./run_ranker.sh --volumes 1,2,6-8 --parallel 4 --dry-run
   ./run_ranker.sh --volumes 10 --start-pdf 1 --end-pdf 20000
+  ./run_ranker.sh --volumes 10 --provider openrouter --retry-failed-local
   ./run_ranker.sh --volumes all --strict-missing
   ./run_ranker.sh --volumes 1 -- --reasoning-effort low --sleep 0.5
 USAGE
@@ -542,6 +549,18 @@ while [[ $# -gt 0 ]]; do
       END_PDF="$2"
       shift 2
       ;;
+    --failure-log)
+      FAILURE_LOG_PATH="$2"
+      shift 2
+      ;;
+    --only-source-ids-file)
+      ONLY_SOURCE_IDS_FILE="$2"
+      shift 2
+      ;;
+    --retry-failed-local)
+      RETRY_FAILED_LOCAL=1
+      shift
+      ;;
     --max-rows)
       MAX_ROWS="$2"
       shift 2
@@ -689,6 +708,10 @@ for vol in "${VOLUMES[@]}"; do
   DATASET_TAG="$(printf "%s_vol%05d" "$DATASET_TAG_PREFIX" "$vol")"
   GIT_CHUNK_DIR="$GIT_OUTPUT_ROOT/$VOL_NAME"
   GIT_CHUNK_MANIFEST="$GIT_CHUNK_DIR/chunks.json"
+  VOL_FAILURE_LOG="$FAILURE_LOG_PATH"
+  if [[ -z "$VOL_FAILURE_LOG" ]] && (( IS_OPENROUTER_ENDPOINT )); then
+    VOL_FAILURE_LOG="$WORKSPACE_ROOT/$DATASET_TAG/metadata/failed_requests_openrouter.jsonl"
+  fi
 
   if [[ ! -d "$VOL_DIR" ]]; then
     if (( SKIP_MISSING )); then
@@ -774,6 +797,12 @@ for vol in "${VOLUMES[@]}"; do
   if [[ -n "$END_PDF" ]]; then
     CMD+=(--end-pdf "$END_PDF")
   fi
+  if [[ -n "$VOL_FAILURE_LOG" ]]; then
+    CMD+=(--failure-log "$VOL_FAILURE_LOG")
+  fi
+  if [[ -n "$ONLY_SOURCE_IDS_FILE" ]]; then
+    CMD+=(--only-source-ids-file "$ONLY_SOURCE_IDS_FILE")
+  fi
   if [[ -n "$INPUT_PRICE_PER_1M" ]]; then
     CMD+=(--input-price-per-1m "$INPUT_PRICE_PER_1M")
   fi
@@ -812,6 +841,76 @@ for vol in "${VOLUMES[@]}"; do
 
   echo "[run] VOL$(printf "%05d" "$vol") -> dataset-tag=$DATASET_TAG"
   "${CMD[@]}"
+
+  if (( RETRY_FAILED_LOCAL )) && (( IS_OPENROUTER_ENDPOINT )) && [[ -n "$VOL_FAILURE_LOG" ]] && [[ -s "$VOL_FAILURE_LOG" ]]; then
+    LOCAL_RETRY_FAILURE_LOG="$WORKSPACE_ROOT/$DATASET_TAG/metadata/failed_requests_local_retry.jsonl"
+    RETRY_CMD=(
+      "$0"
+      --volumes "$vol"
+      --provider local
+      --data-root "$DATA_ROOT"
+      --workspace-root "$WORKSPACE_ROOT"
+      --dataset-tag-prefix "$DATASET_TAG_PREFIX"
+      --git-output-root "$GIT_OUTPUT_ROOT"
+      --dataset-source-label "$DATASET_SOURCE_LABEL"
+      --dataset-source-url "$DATASET_SOURCE_URL"
+      --glob "$INPUT_GLOB"
+      --processing-mode "$PROCESSING_MODE"
+      --parallel "$MAX_PARALLEL_REQUESTS"
+      --parallel-scheduling "$PARALLEL_SCHEDULING"
+      --image-prefetch "$IMAGE_PREFETCH"
+      --image-max-pages "$IMAGE_MAX_PAGES"
+      --pdf-pages-per-image "$PDF_PAGES_PER_IMAGE"
+      --pdf-part-pages "$PDF_PART_PAGES"
+      --image-render-dpi "$IMAGE_RENDER_DPI"
+      --image-detail "$IMAGE_DETAIL"
+      --image-output-format "$IMAGE_OUTPUT_FORMAT"
+      --image-jpeg-quality "$IMAGE_JPEG_QUALITY"
+      --image-max-side "$IMAGE_MAX_SIDE"
+      --max-output-tokens "$MAX_OUTPUT_TOKENS"
+      --temperature "$TEMPERATURE"
+      --sleep "$SLEEP_SECONDS"
+      --chunk-size "$CHUNK_SIZE"
+      --resume
+      --only-source-ids-file "$VOL_FAILURE_LOG"
+      --failure-log "$LOCAL_RETRY_FAILURE_LOG"
+    )
+    if (( ! TRACK_CHUNKS_IN_GIT )); then
+      RETRY_CMD+=(--workspace-chunks)
+    fi
+    if [[ -f "$DATASET_METADATA_FILE" ]]; then
+      RETRY_CMD+=(--dataset-metadata-file "$DATASET_METADATA_FILE")
+    fi
+    if [[ -n "$MAX_ROWS" ]]; then
+      RETRY_CMD+=(--max-rows "$MAX_ROWS")
+    fi
+    if [[ -n "$START_ROW" ]]; then
+      RETRY_CMD+=(--start-row "$START_ROW")
+    fi
+    if [[ -n "$END_ROW" ]]; then
+      RETRY_CMD+=(--end-row "$END_ROW")
+    fi
+    if [[ -n "$START_PDF" ]]; then
+      RETRY_CMD+=(--start-pdf "$START_PDF")
+    fi
+    if [[ -n "$END_PDF" ]]; then
+      RETRY_CMD+=(--end-pdf "$END_PDF")
+    fi
+    if (( FLOW_LOGS )); then
+      RETRY_CMD+=(--flow-logs)
+    else
+      RETRY_CMD+=(--no-flow-logs)
+    fi
+    if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+      RETRY_CMD+=(-- "${EXTRA_ARGS[@]}")
+    fi
+
+    echo "[retry-local] Found failed rows in $VOL_FAILURE_LOG"
+    printf '[retry-local] '
+    printf '%q ' "${RETRY_CMD[@]}"
+    printf '\n'
+    "${RETRY_CMD[@]}"
+  fi
 done
 
 if (( TRACK_CHUNKS_IN_GIT )) && (( ! DRY_RUN )); then

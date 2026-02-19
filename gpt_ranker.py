@@ -391,6 +391,78 @@ def load_jsonl_filenames(path: Optional[Path]) -> Set[str]:
     return completed
 
 
+def extract_source_id_from_record(record: Dict[str, Any]) -> Optional[str]:
+    source_id = record.get("source_id")
+    if isinstance(source_id, str) and source_id.strip():
+        return source_id.strip()
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    if isinstance(metadata, dict):
+        meta_source_id = metadata.get("source_id")
+        if isinstance(meta_source_id, str) and meta_source_id.strip():
+            return meta_source_id.strip()
+    filename = record.get("filename")
+    if isinstance(filename, str) and filename.strip():
+        return filename.strip()
+    return None
+
+
+def load_source_id_filter(path: Optional[Path]) -> Optional[Set[str]]:
+    if not path:
+        return None
+    source_ids: Set[str] = set()
+    if not path.exists():
+        return source_ids
+
+    raw_text = path.read_text(encoding="utf-8", errors="replace")
+    stripped = raw_text.strip()
+    if not stripped:
+        return source_ids
+
+    # Support JSON arrays/objects in addition to line-oriented text/JSONL.
+    if stripped.startswith("[") or stripped.startswith("{"):
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, str) and item.strip():
+                    source_ids.add(item.strip())
+                elif isinstance(item, dict):
+                    record_source_id = extract_source_id_from_record(item)
+                    if record_source_id:
+                        source_ids.add(record_source_id)
+        elif isinstance(payload, dict):
+            listed = payload.get("source_ids")
+            if isinstance(listed, list):
+                for item in listed:
+                    if isinstance(item, str) and item.strip():
+                        source_ids.add(item.strip())
+            else:
+                record_source_id = extract_source_id_from_record(payload)
+                if record_source_id:
+                    source_ids.add(record_source_id)
+        if source_ids:
+            return source_ids
+
+    for line in raw_text.splitlines():
+        candidate = line.strip()
+        if not candidate:
+            continue
+        if candidate.startswith("{"):
+            try:
+                record = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict):
+                record_source_id = extract_source_id_from_record(record)
+                if record_source_id:
+                    source_ids.add(record_source_id)
+            continue
+        source_ids.add(candidate)
+    return source_ids
+
+
 def load_chunk_source_ids(chunk_dir: Path) -> Set[str]:
     completed: Set[str] = set()
     if not chunk_dir.exists():
@@ -436,6 +508,25 @@ def load_resume_completed_ids(args: argparse.Namespace) -> Set[str]:
     for extra_json in args.known_json:
         completed_source_ids |= load_jsonl_filenames(Path(extra_json))
     return completed_source_ids
+
+
+def classify_failure_reason(error_text: str) -> str:
+    lowered = error_text.lower()
+    if "data_inspection_failed" in lowered or "inappropriate content" in lowered:
+        return "provider_content_filter"
+    if "http 500" in lowered or "internal server error" in lowered:
+        return "provider_server_error"
+    if "invalid json" in lowered or "empty message" in lowered:
+        return "model_output_error"
+    if "timeout" in lowered:
+        return "timeout"
+    return "request_error"
+
+
+def append_failure_log(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def ensure_list(value: Any) -> List[str]:
@@ -888,6 +979,7 @@ def count_total_rows(
     pdf_part_pages: int = 0,
     start_pdf: int = 1,
     end_pdf: Optional[int] = None,
+    allowed_source_ids: Optional[Set[str]] = None,
     progress_label: Optional[str] = None,
     pdf_page_count_cache: Optional[PdfPageCountCache] = None,
 ) -> int:
@@ -923,6 +1015,8 @@ def count_total_rows(
                 break
             if not row_matches_pdf_range(row, start_pdf=start_pdf, end_pdf=end_pdf):
                 continue
+            if allowed_source_ids is not None and row_source_id(row) not in allowed_source_ids:
+                continue
             selected_rows += 1
             maybe_log_progress()
         maybe_log_progress(force=True)
@@ -947,6 +1041,7 @@ def calculate_workload(
     end_row: Optional[int],
     start_pdf: int,
     end_pdf: Optional[int],
+    allowed_source_ids: Optional[Set[str]] = None,
     progress_label: Optional[str] = None,
     pdf_page_count_cache: Optional[PdfPageCountCache] = None,
 ) -> Dict[str, int]:
@@ -985,8 +1080,10 @@ def calculate_workload(
             break
         if not row_matches_pdf_range(row, start_pdf=start_pdf, end_pdf=end_pdf):
             continue
-        total += 1
         row_id = row_source_id(row)
+        if allowed_source_ids is not None and row_id not in allowed_source_ids:
+            continue
+        total += 1
         if completed_filenames and row_id in completed_filenames:
             already_done += 1
         else:
@@ -1015,8 +1112,29 @@ def estimate_workload_fast(
     end_pdf: Optional[int],
     max_rows: Optional[int],
     sample_size: int,
+    allowed_source_ids: Optional[Set[str]] = None,
     pdf_page_count_cache: Optional[PdfPageCountCache] = None,
 ) -> Optional[Dict[str, Any]]:
+    if allowed_source_ids is not None:
+        estimated_total_in_range = len(allowed_source_ids)
+        estimated_already_done = sum(
+            1 for source_id in allowed_source_ids if source_id in completed_source_ids
+        )
+        estimated_workload = max(0, estimated_total_in_range - estimated_already_done)
+        if max_rows is not None:
+            estimated_workload = min(estimated_workload, max_rows)
+        return {
+            "estimated_total": estimated_total_in_range,
+            "estimated_total_in_range": estimated_total_in_range,
+            "estimated_workload": estimated_workload,
+            "estimated_already_done": estimated_already_done,
+            "total_files": 0,
+            "pdf_files": 0,
+            "sampled_pdf_count": 0,
+            "avg_parts_per_pdf": 1.0,
+            "avg_pages_per_pdf": None,
+        }
+
     if not path.is_dir():
         return None
 
@@ -1626,6 +1744,8 @@ def build_config_metadata(args: argparse.Namespace, prompt_source: str) -> Dict[
         "pdf_part_pages": args.pdf_part_pages,
         "start_pdf": args.start_pdf,
         "end_pdf": args.end_pdf,
+        "only_source_ids_file": str(args.only_source_ids_file) if args.only_source_ids_file else None,
+        "failure_log": str(args.failure_log) if args.failure_log else None,
         "image_render_dpi": args.image_render_dpi,
         "image_detail": args.image_detail,
         "image_output_format": args.image_output_format,
@@ -1715,6 +1835,7 @@ def write_run_metadata(
             "end_row": getattr(args, "end_row", None),
             "start_pdf": getattr(args, "start_pdf", 1) if args.input.is_dir() else None,
             "end_pdf": getattr(args, "end_pdf", None) if args.input.is_dir() else None,
+            "only_source_ids_file": str(args.only_source_ids_file) if getattr(args, "only_source_ids_file", None) else None,
             "total_rows": total_dataset_rows if total_dataset_rows is not None else "unknown",
         },
         "workload": workload_stats,
@@ -1725,6 +1846,7 @@ def write_run_metadata(
             "chunk_size": args.chunk_size,
             "chunk_dir": str(args.chunk_dir),
             "chunk_manifest": str(args.chunk_manifest),
+            "failure_log": str(args.failure_log) if getattr(args, "failure_log", None) else None,
         },
         "config": config_metadata,
         "prompt_source": prompt_source,
@@ -2187,6 +2309,8 @@ def main() -> None:
             sys.exit("--start-pdf/--end-pdf require --input to be a directory")
         if active_processing_mode != "image":
             sys.exit("--start-pdf/--end-pdf require image mode (set --processing-mode image)")
+    if args.only_source_ids_file and not args.only_source_ids_file.exists():
+        sys.exit(f"--only-source-ids-file not found: {args.only_source_ids_file}")
     if args.chunk_size <= 0:
         if (
             args.output.exists()
@@ -2213,6 +2337,20 @@ def main() -> None:
         args.checkpoint.parent.mkdir(parents=True, exist_ok=True)
     if args.debug_image_dir:
         args.debug_image_dir.mkdir(parents=True, exist_ok=True)
+
+    selected_source_ids = load_source_id_filter(args.only_source_ids_file)
+    if selected_source_ids is not None:
+        print(
+            f"Source-id filter enabled: {len(selected_source_ids):,} id(s) loaded from "
+            f"{args.only_source_ids_file}",
+            flush=True,
+        )
+        if not selected_source_ids:
+            print("Source-id filter is empty. No rows to process.", flush=True)
+            return
+    if args.failure_log:
+        args.failure_log.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Failure log enabled: {args.failure_log}", flush=True)
 
     if active_processing_mode == "image":
         if args.skip_low_quality:
@@ -2332,6 +2470,8 @@ def main() -> None:
             workload_scan_mode = "defer"
         else:
             workload_scan_mode = "full"
+    if selected_source_ids is not None:
+        workload_scan_mode = "full"
 
     workload_scanned = workload_scan_mode == "full"
     workload_stats: Dict[str, int] = {"total": 0, "already_done": 0, "workload": 0}
@@ -2359,6 +2499,7 @@ def main() -> None:
             end_row=args.end_row,
             start_pdf=args.start_pdf,
             end_pdf=args.end_pdf,
+            allowed_source_ids=selected_source_ids,
             progress_label=workload_progress_label,
             pdf_page_count_cache=pdf_page_count_cache,
         )
@@ -2384,6 +2525,7 @@ def main() -> None:
             end_row=args.end_row,
             start_pdf=args.start_pdf,
             end_pdf=args.end_pdf,
+            allowed_source_ids=selected_source_ids,
             max_rows=args.max_rows,
             sample_size=args.workload_estimate_sample_size,
             pdf_page_count_cache=pdf_page_count_cache,
@@ -2422,6 +2564,8 @@ def main() -> None:
         )
     else:
         range_desc = row_range_desc
+    if selected_source_ids is not None:
+        range_desc = f"{range_desc} | source-id filter={len(selected_source_ids):,}"
     if target_total is not None:
         if target_total_is_estimate:
             print(
@@ -2448,6 +2592,7 @@ def main() -> None:
         and args.end_row is None
         and args.start_pdf == 1
         and args.end_pdf is None
+        and selected_source_ids is None
         and args.max_rows is None
     )
 
@@ -2473,6 +2618,7 @@ def main() -> None:
             pdf_part_pages=args.pdf_part_pages,
             start_pdf=args.start_pdf,
             end_pdf=args.end_pdf,
+            allowed_source_ids=selected_source_ids,
             progress_label=(
                 "Counting total rows (cached page counts)"
                 if active_processing_mode == "image" and args.input.is_dir()
@@ -2497,6 +2643,7 @@ def main() -> None:
             pdf_part_pages=args.pdf_part_pages,
             start_pdf=args.start_pdf,
             end_pdf=args.end_pdf,
+            allowed_source_ids=selected_source_ids,
             progress_label=(
                 "Counting total rows for metadata (cached page counts)"
                 if active_processing_mode == "image" and args.input.is_dir()
@@ -2555,6 +2702,8 @@ def main() -> None:
     scheduled = 0
     skipped = 0
     failed = 0
+    failure_log_records = 0
+    failure_source_ids: Set[str] = set()
     model_scored = 0
     api_rows_with_usage = 0
     api_prompt_tokens_total = 0
@@ -2606,15 +2755,38 @@ def main() -> None:
                 api_cost_usd_total += row_cost_usd
 
     def flush_ready() -> None:
-        nonlocal processed, skipped, failed, model_scored
+        nonlocal processed, skipped, failed, model_scored, failure_log_records, failure_source_ids
         while emit_order and emit_order[0] in pending_results:
             row_idx = emit_order.popleft()
             outcome = pending_results.pop(row_idx)
             if outcome["type"] == "error":
                 failed += 1
                 row_ref = row_source_id(outcome["row"]) or outcome["row"].get("filename", "")
+                error_text = str(outcome["error"])
+                error_category = outcome.get("error_category") or classify_failure_reason(error_text)
+                failure_source_ids.add(row_ref)
+                if args.failure_log:
+                    append_failure_log(
+                        args.failure_log,
+                        {
+                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            "source_row_index": row_idx,
+                            "source_id": row_ref,
+                            "filename": outcome["row"].get("filename", ""),
+                            "document_part": outcome["row"].get("document_part", ""),
+                            "part_index": outcome["row"].get("part_index"),
+                            "part_total": outcome["row"].get("part_total"),
+                            "source_pdf_index": outcome["row"].get("source_pdf_index"),
+                            "error_category": error_category,
+                            "error": error_text,
+                            "endpoint": args.endpoint,
+                            "model": args.model,
+                            "openrouter_provider": args.openrouter_provider,
+                        },
+                    )
+                    failure_log_records += 1
                 print(
-                    f"  ! Failed to analyze {row_ref}: {outcome['error']}",
+                    f"  ! Failed to analyze {row_ref}: {error_text}",
                     file=sys.stderr,
                 )
                 continue
@@ -2700,6 +2872,7 @@ def main() -> None:
                     "type": "error",
                     "row": row,
                     "error": str(exc),
+                    "error_category": classify_failure_reason(str(exc)),
                 }
         flush_ready()
 
@@ -2758,6 +2931,8 @@ def main() -> None:
             input_kind = row.get("input_kind", "text")
             source_path = Path(row["source_path"]) if row.get("source_path") else None
 
+            if selected_source_ids is not None and source_id not in selected_source_ids:
+                continue
             if source_id in completed_source_ids:
                 resume_skipped_rows += 1
                 resume_skip_last_idx = idx
@@ -2901,6 +3076,7 @@ def main() -> None:
                         "type": "error",
                         "row": row,
                         "error": str(exc),
+                        "error_category": classify_failure_reason(str(exc)),
                     }
                 flush_ready()
             else:
@@ -3036,6 +3212,11 @@ def main() -> None:
         complete_msg = (
             f"{complete_msg}\nModel API cost: ${api_cost_usd_total:.6f} "
             f"(rows with cost: {api_rows_with_cost}, avg ${avg_cost:.6f}/row)"
+        )
+    if args.failure_log:
+        complete_msg = (
+            f"{complete_msg}\nFailure log: {args.failure_log} "
+            f"(records written: {failure_log_records}, unique source ids: {len(failure_source_ids)})"
         )
     if cost_summary:
         complete_msg = f"{complete_msg}\n{cost_summary}"

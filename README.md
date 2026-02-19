@@ -92,6 +92,7 @@ Recommended (FTA image/PDF workflow): use the helper script.
 ./run_ranker.sh --volumes 1,2,6-7 --parallel 4 --parallel-scheduling batch
 ./run_ranker.sh --provider openrouter --volumes 3 --image-max-pages 8 --pdf-pages-per-image 4
 ./run_ranker.sh --volumes 10 --start-pdf 1 --end-pdf 250000
+./run_ranker.sh --volumes 10 --provider openrouter --retry-failed-local
 ./run_ranker.sh --volumes 1-12 --dry-run
 ./run_ranker.sh --volumes all -- --reasoning-effort low
 ```
@@ -127,6 +128,7 @@ Override at runtime with:
 - Rebuilds a global FTA manifest at `contrib/fta/chunks.json` after each run (used by the DOJ dataset view).
 - Uses `--resume` by default.
 - Skips missing volumes by default (use `--strict-missing` to fail instead).
+- For OpenRouter runs, writes failed-row logs to `data/workspaces/<dataset-tag>/metadata/failed_requests_openrouter.jsonl` by default.
 
 Direct CLI example (single volume, no wrapper):
 
@@ -190,6 +192,9 @@ Notable flags:
 - `--rebuild-manifest`: scan `contrib/` for chunk files and rebuild `data/chunks.json` (useful if the manifest gets out of sync).
 - `--start-row`, `--end-row`: process only a slice of generated source rows (1-based, inclusive).
 - `--start-pdf`, `--end-pdf`: process only a slice of PDF files (1-based, inclusive, before per-PDF part splitting). Useful for splitting a volume between local/cloud runs.
+- `--failure-log`: write failed rows (with error details) to a JSONL file for targeted retry.
+- `--only-source-ids-file`: process only listed `source_id` values (newline, JSON list, or JSONL records with `source_id`).
+- `run_ranker.sh --retry-failed-local`: run OpenRouter first, then automatically rerun failed source IDs locally.
 - `--chunk-size`, `--chunk-dir`, `--chunk-manifest`: control chunk splitting, where chunk files live, and where the manifest is written.
 - `--overwrite-output`: explicitly allow truncating existing files (default is to refuse unless `--resume` or unique paths are used).
 - `--power-watts`, `--electric-rate`, `--run-hours`: plug in your local power draw/cost to estimate total electricity usage (also configurable via the TOML file).

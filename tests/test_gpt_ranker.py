@@ -140,6 +140,32 @@ class GptRankerHelpersTest(unittest.TestCase):
         self.assertEqual(stats["total"], 2)
         self.assertEqual(stats["workload"], 2)
 
+    def test_load_source_id_filter_parses_mixed_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "failed.jsonl"
+            path.write_text(
+                "\n".join(
+                    [
+                        '{"source_id":"IMAGES/0001/A.pdf"}',
+                        "IMAGES/0002/B.pdf",
+                        '{"metadata":{"source_id":"IMAGES/0003/C.pdf"}}',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            loaded = gpt_ranker.load_source_id_filter(path)
+
+        self.assertEqual(
+            loaded,
+            {"IMAGES/0001/A.pdf", "IMAGES/0002/B.pdf", "IMAGES/0003/C.pdf"},
+        )
+
+    def test_classify_failure_reason_detects_content_filter(self) -> None:
+        category = gpt_ranker.classify_failure_reason(
+            'HTTP 400 ... code":"data_inspection_failed" ... Input data may contain inappropriate content'
+        )
+        self.assertEqual(category, "provider_content_filter")
+
     def test_skip_reason_flags_low_quality_rows(self) -> None:
         quality = gpt_ranker.assess_text_quality("x")
         reason = gpt_ranker.build_skip_reason(quality, self.skip_args)

@@ -316,6 +316,24 @@ def parse_args() -> argparse.Namespace:
         help="Additional JSONL files containing already-processed rows to skip.",
     )
     parser.add_argument(
+        "--only-source-ids-file",
+        type=Path,
+        default=None,
+        help=(
+            "Optional newline/JSON/JSONL file listing source_id values to process. "
+            "When set, rows not in this list are skipped."
+        ),
+    )
+    parser.add_argument(
+        "--failure-log",
+        type=Path,
+        default=None,
+        help=(
+            "Optional JSONL path for recording failed rows (source_id, row index, "
+            "error, and lightweight metadata) for targeted retries."
+        ),
+    )
+    parser.add_argument(
         "--chunk-size",
         type=int,
         default=1000,
