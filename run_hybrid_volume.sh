@@ -35,9 +35,10 @@ Options:
   -h, --help                 Show help
 
 What it does:
-  1) Runs OpenRouter for the target volume and logs failures to:
+  1) Runs OpenRouter for the target volume with immediate local fallback on provider
+     content-filter blocks, and logs unresolved failures to:
      data/workspaces/standardworks_epstein_files_volXXXXX/metadata/failed_requests_openrouter.jsonl
-  2) If that log has entries, reruns only those failed source IDs locally.
+  2) If that log has entries, reruns only those unresolved failed source IDs locally.
 USAGE
 }
 
@@ -106,8 +107,8 @@ VOL_TAG="$(printf "standardworks_epstein_files_vol%05d" "$VOLUME")"
 FAIL_LOG="data/workspaces/${VOL_TAG}/metadata/failed_requests_openrouter.jsonl"
 
 mkdir -p "$(dirname "$FAIL_LOG")"
-# Reset failure log so local retry only targets this run's cloud failures.
-: > "$FAIL_LOG"
+# Keep cumulative failure history so interrupted runs do not lose retry candidates.
+touch "$FAIL_LOG"
 
 CLOUD_CMD=(
   ./run_ranker.sh
@@ -127,6 +128,7 @@ fi
 if (( DRY_RUN )); then
   CLOUD_CMD+=(--dry-run)
 fi
+CLOUD_CMD+=(-- --workload-scan defer)
 
 echo "[cloud] Running volume $VOLUME on OpenRouter..."
 printf '[cloud] '
@@ -160,6 +162,7 @@ fi
 if (( DRY_RUN )); then
   LOCAL_CMD+=(--dry-run)
 fi
+LOCAL_CMD+=(-- --workload-scan defer)
 
 echo "[local-retry] Found failed rows; retrying locally using $FAIL_LOG"
 printf '[local-retry] '

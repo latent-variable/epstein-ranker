@@ -980,6 +980,7 @@ def count_total_rows(
     start_pdf: int = 1,
     end_pdf: Optional[int] = None,
     allowed_source_ids: Optional[Set[str]] = None,
+    excluded_source_ids: Optional[Set[str]] = None,
     progress_label: Optional[str] = None,
     pdf_page_count_cache: Optional[PdfPageCountCache] = None,
 ) -> int:
@@ -1015,18 +1016,37 @@ def count_total_rows(
                 break
             if not row_matches_pdf_range(row, start_pdf=start_pdf, end_pdf=end_pdf):
                 continue
-            if allowed_source_ids is not None and row_source_id(row) not in allowed_source_ids:
+            row_id = row_source_id(row)
+            if allowed_source_ids is not None and row_id not in allowed_source_ids:
+                continue
+            if excluded_source_ids is not None and row_id in excluded_source_ids:
                 continue
             selected_rows += 1
             maybe_log_progress()
         maybe_log_progress(force=True)
         return selected_rows
-    with path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        for scanned_rows, _ in enumerate(reader, start=1):
-            maybe_log_progress()
-        maybe_log_progress(force=True)
-        return scanned_rows
+
+    for idx, row in enumerate(
+        iter_rows(
+            path,
+            input_glob=input_glob,
+            include_text=False,
+            processing_mode=processing_mode,
+            pdf_part_pages=pdf_part_pages,
+            pdf_page_count_cache=pdf_page_count_cache,
+        ),
+        start=1,
+    ):
+        scanned_rows = idx
+        row_id = row_source_id(row)
+        if allowed_source_ids is not None and row_id not in allowed_source_ids:
+            continue
+        if excluded_source_ids is not None and row_id in excluded_source_ids:
+            continue
+        selected_rows += 1
+        maybe_log_progress()
+    maybe_log_progress(force=True)
+    return selected_rows
 
 
 def calculate_workload(
@@ -1042,6 +1062,7 @@ def calculate_workload(
     start_pdf: int,
     end_pdf: Optional[int],
     allowed_source_ids: Optional[Set[str]] = None,
+    excluded_source_ids: Optional[Set[str]] = None,
     progress_label: Optional[str] = None,
     pdf_page_count_cache: Optional[PdfPageCountCache] = None,
 ) -> Dict[str, int]:
@@ -1083,6 +1104,8 @@ def calculate_workload(
         row_id = row_source_id(row)
         if allowed_source_ids is not None and row_id not in allowed_source_ids:
             continue
+        if excluded_source_ids is not None and row_id in excluded_source_ids:
+            continue
         total += 1
         if completed_filenames and row_id in completed_filenames:
             already_done += 1
@@ -1113,12 +1136,16 @@ def estimate_workload_fast(
     max_rows: Optional[int],
     sample_size: int,
     allowed_source_ids: Optional[Set[str]] = None,
+    excluded_source_ids: Optional[Set[str]] = None,
     pdf_page_count_cache: Optional[PdfPageCountCache] = None,
 ) -> Optional[Dict[str, Any]]:
     if allowed_source_ids is not None:
-        estimated_total_in_range = len(allowed_source_ids)
+        allowed_ids = set(allowed_source_ids)
+        if excluded_source_ids:
+            allowed_ids -= excluded_source_ids
+        estimated_total_in_range = len(allowed_ids)
         estimated_already_done = sum(
-            1 for source_id in allowed_source_ids if source_id in completed_source_ids
+            1 for source_id in allowed_ids if source_id in completed_source_ids
         )
         estimated_workload = max(0, estimated_total_in_range - estimated_already_done)
         if max_rows is not None:
@@ -1487,6 +1514,7 @@ def format_request_flow_details(result: Dict[str, Any], *, wall_seconds: Optiona
     total_pages = meta.get("source_total_pages")
     endpoint = meta.get("endpoint")
     attempt = meta.get("attempt")
+    local_fallback = meta.get("local_fallback")
     usage = normalize_token_usage(meta.get("usage"))
     model_cost = meta.get("model_cost") if isinstance(meta.get("model_cost"), dict) else {}
     total_cost_usd = _as_float(model_cost.get("total_cost_usd"))
@@ -1507,6 +1535,13 @@ def format_request_flow_details(result: Dict[str, Any], *, wall_seconds: Optiona
             parts.append(f"pages={pages}")
     if isinstance(attempt, int):
         parts.append(f"attempt={attempt}")
+    if isinstance(local_fallback, dict):
+        trigger = local_fallback.get("trigger")
+        primary_endpoint = local_fallback.get("primary_endpoint")
+        if isinstance(trigger, str) and trigger:
+            parts.append(f"fallback={trigger}")
+        if isinstance(primary_endpoint, str) and primary_endpoint:
+            parts.append(f"fallback_from={primary_endpoint}")
     prompt_tokens = usage.get("prompt_tokens")
     completion_tokens = usage.get("completion_tokens")
     total_tokens = usage.get("total_tokens")
@@ -1745,7 +1780,21 @@ def build_config_metadata(args: argparse.Namespace, prompt_source: str) -> Dict[
         "start_pdf": args.start_pdf,
         "end_pdf": args.end_pdf,
         "only_source_ids_file": str(args.only_source_ids_file) if args.only_source_ids_file else None,
+        "exclude_source_ids_file": str(args.exclude_source_ids_file) if args.exclude_source_ids_file else None,
         "failure_log": str(args.failure_log) if args.failure_log else None,
+        "content_filter_blocklist": (
+            str(args.content_filter_blocklist) if args.content_filter_blocklist else None
+        ),
+        "local_fallback_on_content_filter": args.local_fallback_on_content_filter,
+        "local_fallback_endpoint": (
+            args.local_fallback_endpoint if args.local_fallback_on_content_filter else None
+        ),
+        "local_fallback_model": (
+            args.local_fallback_model if args.local_fallback_on_content_filter else None
+        ),
+        "local_fallback_api_format": (
+            args.local_fallback_api_format if args.local_fallback_on_content_filter else None
+        ),
         "image_render_dpi": args.image_render_dpi,
         "image_detail": args.image_detail,
         "image_output_format": args.image_output_format,
@@ -1836,6 +1885,7 @@ def write_run_metadata(
             "start_pdf": getattr(args, "start_pdf", 1) if args.input.is_dir() else None,
             "end_pdf": getattr(args, "end_pdf", None) if args.input.is_dir() else None,
             "only_source_ids_file": str(args.only_source_ids_file) if getattr(args, "only_source_ids_file", None) else None,
+            "exclude_source_ids_file": str(args.exclude_source_ids_file) if getattr(args, "exclude_source_ids_file", None) else None,
             "total_rows": total_dataset_rows if total_dataset_rows is not None else "unknown",
         },
         "workload": workload_stats,
@@ -1847,6 +1897,11 @@ def write_run_metadata(
             "chunk_dir": str(args.chunk_dir),
             "chunk_manifest": str(args.chunk_manifest),
             "failure_log": str(args.failure_log) if getattr(args, "failure_log", None) else None,
+            "content_filter_blocklist": (
+                str(args.content_filter_blocklist)
+                if getattr(args, "content_filter_blocklist", None)
+                else None
+            ),
         },
         "config": config_metadata,
         "prompt_source": prompt_source,
@@ -2279,6 +2334,15 @@ def main() -> None:
             "Image mode is not supported with --api-format chat. "
             "Use --api-format openai or --api-format auto."
         )
+    if (
+        args.local_fallback_on_content_filter
+        and active_processing_mode == "image"
+        and args.local_fallback_api_format == "chat"
+    ):
+        sys.exit(
+            "Image mode local fallback cannot use --local-fallback-api-format chat. "
+            "Use openai or auto."
+        )
     if "openrouter.ai" in args.endpoint and not args.api_key:
         sys.exit(
             "OpenRouter endpoint detected but --api-key is missing. "
@@ -2348,6 +2412,16 @@ def main() -> None:
         if not selected_source_ids:
             print("Source-id filter is empty. No rows to process.", flush=True)
             return
+    excluded_source_ids = load_source_id_filter(args.exclude_source_ids_file)
+    if excluded_source_ids is not None:
+        print(
+            f"Source-id exclusion enabled: {len(excluded_source_ids):,} id(s) loaded from "
+            f"{args.exclude_source_ids_file}",
+            flush=True,
+        )
+    if args.content_filter_blocklist:
+        args.content_filter_blocklist.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Content-filter blocklist enabled: {args.content_filter_blocklist}", flush=True)
     if args.failure_log:
         args.failure_log.parent.mkdir(parents=True, exist_ok=True)
         print(f"Failure log enabled: {args.failure_log}", flush=True)
@@ -2420,6 +2494,14 @@ def main() -> None:
                 "cost tracking will use provider-reported cost only (if present).",
                 flush=True,
             )
+    if args.local_fallback_on_content_filter:
+        print(
+            "Local content-filter fallback enabled: "
+            f"endpoint={args.local_fallback_endpoint} | "
+            f"model={args.local_fallback_model} | "
+            f"api_format={args.local_fallback_api_format}",
+            flush=True,
+        )
 
     fieldnames = [
         "source_id",
@@ -2470,8 +2552,6 @@ def main() -> None:
             workload_scan_mode = "defer"
         else:
             workload_scan_mode = "full"
-    if selected_source_ids is not None:
-        workload_scan_mode = "full"
 
     workload_scanned = workload_scan_mode == "full"
     workload_stats: Dict[str, int] = {"total": 0, "already_done": 0, "workload": 0}
@@ -2500,6 +2580,7 @@ def main() -> None:
             start_pdf=args.start_pdf,
             end_pdf=args.end_pdf,
             allowed_source_ids=selected_source_ids,
+            excluded_source_ids=excluded_source_ids,
             progress_label=workload_progress_label,
             pdf_page_count_cache=pdf_page_count_cache,
         )
@@ -2526,6 +2607,7 @@ def main() -> None:
             start_pdf=args.start_pdf,
             end_pdf=args.end_pdf,
             allowed_source_ids=selected_source_ids,
+            excluded_source_ids=excluded_source_ids,
             max_rows=args.max_rows,
             sample_size=args.workload_estimate_sample_size,
             pdf_page_count_cache=pdf_page_count_cache,
@@ -2566,6 +2648,8 @@ def main() -> None:
         range_desc = row_range_desc
     if selected_source_ids is not None:
         range_desc = f"{range_desc} | source-id filter={len(selected_source_ids):,}"
+    if excluded_source_ids is not None:
+        range_desc = f"{range_desc} | source-id exclusions={len(excluded_source_ids):,}"
     if target_total is not None:
         if target_total_is_estimate:
             print(
@@ -2593,6 +2677,7 @@ def main() -> None:
         and args.start_pdf == 1
         and args.end_pdf is None
         and selected_source_ids is None
+        and excluded_source_ids is None
         and args.max_rows is None
     )
 
@@ -2619,6 +2704,7 @@ def main() -> None:
             start_pdf=args.start_pdf,
             end_pdf=args.end_pdf,
             allowed_source_ids=selected_source_ids,
+            excluded_source_ids=excluded_source_ids,
             progress_label=(
                 "Counting total rows (cached page counts)"
                 if active_processing_mode == "image" and args.input.is_dir()
@@ -2644,6 +2730,7 @@ def main() -> None:
             start_pdf=args.start_pdf,
             end_pdf=args.end_pdf,
             allowed_source_ids=selected_source_ids,
+            excluded_source_ids=excluded_source_ids,
             progress_label=(
                 "Counting total rows for metadata (cached page counts)"
                 if active_processing_mode == "image" and args.input.is_dir()
@@ -2704,6 +2791,9 @@ def main() -> None:
     failed = 0
     failure_log_records = 0
     failure_source_ids: Set[str] = set()
+    content_filter_blocked_written = 0
+    content_filter_blocked_seen: Set[str] = set()
+    local_fallback_processed = 0
     model_scored = 0
     api_rows_with_usage = 0
     api_prompt_tokens_total = 0
@@ -2754,8 +2844,79 @@ def main() -> None:
                 api_rows_with_cost += 1
                 api_cost_usd_total += row_cost_usd
 
+    def mark_content_filter_blocked(source_id_value: str) -> None:
+        nonlocal content_filter_blocked_written
+        if not args.content_filter_blocklist:
+            return
+        source_id_normalized = str(source_id_value).strip()
+        if not source_id_normalized or source_id_normalized in content_filter_blocked_seen:
+            return
+        args.content_filter_blocklist.parent.mkdir(parents=True, exist_ok=True)
+        with args.content_filter_blocklist.open("a", encoding="utf-8") as handle:
+            handle.write(source_id_normalized + "\n")
+        content_filter_blocked_seen.add(source_id_normalized)
+        content_filter_blocked_written += 1
+
+    def execute_request_with_local_fallback(
+        *,
+        request_kwargs: Dict[str, Any],
+        row_idx: int,
+        source_id: str,
+    ) -> Dict[str, Any]:
+        try:
+            return call_model(**request_kwargs)
+        except Exception as primary_exc:  # noqa: BLE001
+            primary_error = str(primary_exc)
+            primary_category = classify_failure_reason(primary_error)
+            if not (
+                args.local_fallback_on_content_filter
+                and primary_category == "provider_content_filter"
+            ):
+                raise
+            if args.flow_logs:
+                print(
+                    f"[Row {row_idx}] [fallback] {source_id} | "
+                    f"trigger={primary_category} | endpoint={args.local_fallback_endpoint}",
+                    flush=True,
+                )
+            fallback_kwargs = dict(request_kwargs)
+            fallback_kwargs.update(
+                {
+                    "endpoint": args.local_fallback_endpoint,
+                    "api_format": args.local_fallback_api_format,
+                    "model": args.local_fallback_model,
+                    "api_key": None,
+                    "http_referer": None,
+                    "x_title": None,
+                    "openrouter_provider": None,
+                    "openrouter_allow_fallbacks": None,
+                }
+            )
+            try:
+                fallback_result = call_model(**fallback_kwargs)
+            except Exception as fallback_exc:  # noqa: BLE001
+                raise RuntimeError(
+                    f"{primary_error} | Local fallback failed via "
+                    f"{args.local_fallback_endpoint}: {fallback_exc}"
+                ) from fallback_exc
+            request_meta = (
+                fallback_result.get("_request_meta")
+                if isinstance(fallback_result.get("_request_meta"), dict)
+                else {}
+            )
+            request_meta["local_fallback"] = {
+                "trigger": primary_category,
+                "primary_endpoint": request_kwargs.get("endpoint"),
+                "primary_model": request_kwargs.get("model"),
+                "primary_error": primary_error,
+            }
+            fallback_result["_request_meta"] = request_meta
+            return fallback_result
+
     def flush_ready() -> None:
         nonlocal processed, skipped, failed, model_scored, failure_log_records, failure_source_ids
+        nonlocal content_filter_blocked_written, content_filter_blocked_seen
+        nonlocal local_fallback_processed
         while emit_order and emit_order[0] in pending_results:
             row_idx = emit_order.popleft()
             outcome = pending_results.pop(row_idx)
@@ -2765,6 +2926,11 @@ def main() -> None:
                 error_text = str(outcome["error"])
                 error_category = outcome.get("error_category") or classify_failure_reason(error_text)
                 failure_source_ids.add(row_ref)
+                if (
+                    args.content_filter_blocklist
+                    and error_category == "provider_content_filter"
+                ):
+                    mark_content_filter_blocked(row_ref)
                 if args.failure_log:
                     append_failure_log(
                         args.failure_log,
@@ -2804,6 +2970,20 @@ def main() -> None:
             output_router.write(row_idx, csv_row, json_record)
 
             row_key = row_source_id(outcome["row"])
+            request_meta = (
+                outcome["result"].get("_request_meta")
+                if isinstance(outcome["result"], dict)
+                and isinstance(outcome["result"].get("_request_meta"), dict)
+                else {}
+            )
+            local_fallback_meta = (
+                request_meta.get("local_fallback")
+                if isinstance(request_meta.get("local_fallback"), dict)
+                else {}
+            )
+            if local_fallback_meta.get("trigger") == "provider_content_filter":
+                mark_content_filter_blocked(row_key)
+                local_fallback_processed += 1
             if checkpoint_handle:
                 checkpoint_handle.write(row_key + "\n")
                 checkpoint_handle.flush()
@@ -2933,6 +3113,8 @@ def main() -> None:
 
             if selected_source_ids is not None and source_id not in selected_source_ids:
                 continue
+            if excluded_source_ids is not None and source_id in excluded_source_ids:
+                continue
             if source_id in completed_source_ids:
                 resume_skipped_rows += 1
                 resume_skip_last_idx = idx
@@ -3052,7 +3234,11 @@ def main() -> None:
             if executor is None:
                 try:
                     sync_started = time.monotonic()
-                    result = call_model(**request_kwargs)
+                    result = execute_request_with_local_fallback(
+                        request_kwargs=request_kwargs,
+                        row_idx=idx,
+                        source_id=source_id,
+                    )
                     attach_request_usage_and_cost(result, args)
                     record_completion_for_eta(result)
                     if args.flow_logs:
@@ -3090,47 +3276,10 @@ def main() -> None:
                         flush=True,
                     )
                 future = executor.submit(
-                    call_model,
-                    endpoint=args.endpoint,
-                    api_format=args.api_format,
-                    model=args.model,
-                    filename=row.get("analysis_filename") or filename,
-                    text=text,
-                    input_kind=input_kind,
-                    image_path=source_path if input_kind == "image" else None,
-                    image_max_pages=effective_image_max_pages,
-                    pdf_pages_per_image=args.pdf_pages_per_image,
-                    image_output_format=args.image_output_format,
-                    image_jpeg_quality=args.image_jpeg_quality,
-                    image_max_side=args.image_max_side,
-                    debug_image_dir=args.debug_image_dir,
-                    image_start_page=int(row.get("part_start_page") or 1),
-                    image_part_index=(
-                        int(row["part_index"]) if row.get("part_index") is not None else None
-                    ),
-                    image_part_total=(
-                        int(row["part_total"]) if row.get("part_total") is not None else None
-                    ),
-                    image_render_dpi=args.image_render_dpi,
-                    system_prompt=system_prompt,
-                    api_key=args.api_key,
-                    timeout=args.timeout,
-                    max_retries=args.max_retries,
-                    retry_backoff=args.retry_backoff,
-                    temperature=args.temperature,
-                    max_output_tokens=args.max_output_tokens,
-                    reasoning_effort=args.reasoning_effort,
-                    image_detail=args.image_detail,
-                    request_semaphore=request_semaphore,
-                    http_referer=args.http_referer,
-                    x_title=args.x_title,
-                    openrouter_provider=args.openrouter_provider,
-                    openrouter_allow_fallbacks=(
-                        None
-                        if not args.openrouter_provider
-                        else (not args.openrouter_no_fallbacks)
-                    ),
-                    config_metadata=config_metadata,
+                    execute_request_with_local_fallback,
+                    request_kwargs=request_kwargs,
+                    row_idx=idx,
+                    source_id=source_id,
                 )
                 in_flight[future] = {
                     "idx": idx,
@@ -3217,6 +3366,16 @@ def main() -> None:
         complete_msg = (
             f"{complete_msg}\nFailure log: {args.failure_log} "
             f"(records written: {failure_log_records}, unique source ids: {len(failure_source_ids)})"
+        )
+    if args.content_filter_blocklist:
+        complete_msg = (
+            f"{complete_msg}\nContent-filter blocklist: {args.content_filter_blocklist} "
+            f"(new source ids appended this run: {content_filter_blocked_written})"
+        )
+    if args.local_fallback_on_content_filter:
+        complete_msg = (
+            f"{complete_msg}\nLocal content-filter fallbacks completed this run: "
+            f"{local_fallback_processed}"
         )
     if cost_summary:
         complete_msg = f"{complete_msg}\n{cost_summary}"

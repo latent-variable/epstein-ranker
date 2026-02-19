@@ -71,7 +71,14 @@ START_PDF=""
 END_PDF=""
 FAILURE_LOG_PATH=""
 ONLY_SOURCE_IDS_FILE=""
+EXCLUDE_SOURCE_IDS_FILE=""
+CONTENT_FILTER_BLOCKLIST=""
 RETRY_FAILED_LOCAL=0
+LOCAL_FALLBACK_ON_CONTENT_FILTER=0
+LOCAL_FALLBACK_ON_CONTENT_FILTER_EXPLICIT=0
+LOCAL_FALLBACK_ENDPOINT="$LOCAL_DEFAULT_ENDPOINT"
+LOCAL_FALLBACK_MODEL="$LOCAL_DEFAULT_MODEL"
+LOCAL_FALLBACK_API_FORMAT="openai"
 INPUT_PRICE_PER_1M="${INPUT_PRICE_PER_1M:-}"
 OUTPUT_PRICE_PER_1M="${OUTPUT_PRICE_PER_1M:-}"
 CACHE_READ_PRICE_PER_1M="${CACHE_READ_PRICE_PER_1M:-}"
@@ -149,7 +156,20 @@ Model/runtime options:
   --end-pdf N                End at 1-based PDF file index (inclusive, pre-split)
   --failure-log PATH         JSONL log path for failed rows (auto for OpenRouter if omitted)
   --only-source-ids-file P   Process only source_id values listed in a file
+  --exclude-source-ids-file P
+                             Skip source_id values listed in a file
+  --content-filter-blocklist P
+                             Append provider content-filter failures to this source_id file
   --retry-failed-local       After OpenRouter pass, rerun failed source IDs locally
+  --local-fallback-on-content-filter
+                             Retry provider content-filter failures immediately on local endpoint
+  --no-local-fallback-on-content-filter
+                             Disable immediate local fallback
+  --local-fallback-endpoint URL
+                             Local endpoint for immediate content-filter fallback
+  --local-fallback-model ID  Local model id for immediate content-filter fallback
+  --local-fallback-api-format FMT
+                             Local fallback API format: auto | openai | chat (default: openai)
   --max-rows N               Limit rows for smoke test per volume
 
 Control options:
@@ -557,9 +577,39 @@ while [[ $# -gt 0 ]]; do
       ONLY_SOURCE_IDS_FILE="$2"
       shift 2
       ;;
+    --exclude-source-ids-file)
+      EXCLUDE_SOURCE_IDS_FILE="$2"
+      shift 2
+      ;;
+    --content-filter-blocklist)
+      CONTENT_FILTER_BLOCKLIST="$2"
+      shift 2
+      ;;
     --retry-failed-local)
       RETRY_FAILED_LOCAL=1
       shift
+      ;;
+    --local-fallback-on-content-filter)
+      LOCAL_FALLBACK_ON_CONTENT_FILTER=1
+      LOCAL_FALLBACK_ON_CONTENT_FILTER_EXPLICIT=1
+      shift
+      ;;
+    --no-local-fallback-on-content-filter)
+      LOCAL_FALLBACK_ON_CONTENT_FILTER=0
+      LOCAL_FALLBACK_ON_CONTENT_FILTER_EXPLICIT=1
+      shift
+      ;;
+    --local-fallback-endpoint)
+      LOCAL_FALLBACK_ENDPOINT="$2"
+      shift 2
+      ;;
+    --local-fallback-model)
+      LOCAL_FALLBACK_MODEL="$2"
+      shift 2
+      ;;
+    --local-fallback-api-format)
+      LOCAL_FALLBACK_API_FORMAT="$2"
+      shift 2
       ;;
     --max-rows)
       MAX_ROWS="$2"
@@ -652,6 +702,9 @@ if [[ "$PROVIDER" == "openrouter" ]]; then
     CACHE_READ_PRICE_PER_1M="$OPENROUTER_DEFAULT_CACHE_READ_PRICE_PER_1M"
     CACHE_WRITE_PRICE_PER_1M="$OPENROUTER_DEFAULT_CACHE_WRITE_PRICE_PER_1M"
   fi
+  if (( LOCAL_FALLBACK_ON_CONTENT_FILTER_EXPLICIT == 0 )); then
+    LOCAL_FALLBACK_ON_CONTENT_FILTER=1
+  fi
 fi
 
 IS_OPENROUTER_ENDPOINT=0
@@ -701,6 +754,9 @@ fi
 if [[ -n "$INPUT_PRICE_PER_1M" || -n "$OUTPUT_PRICE_PER_1M" || -n "$CACHE_READ_PRICE_PER_1M" || -n "$CACHE_WRITE_PRICE_PER_1M" ]]; then
   echo "Token pricing (USD / 1M): input=${INPUT_PRICE_PER_1M:-unset}, output=${OUTPUT_PRICE_PER_1M:-unset}, cache_read=${CACHE_READ_PRICE_PER_1M:-unset}, cache_write=${CACHE_WRITE_PRICE_PER_1M:-unset}"
 fi
+if (( LOCAL_FALLBACK_ON_CONTENT_FILTER )); then
+  echo "Local fallback on provider content-filter: endpoint=$LOCAL_FALLBACK_ENDPOINT | model=$LOCAL_FALLBACK_MODEL | api_format=$LOCAL_FALLBACK_API_FORMAT"
+fi
 
 for vol in "${VOLUMES[@]}"; do
   VOL_DIR="$(printf "%s/VOL%05d" "$DATA_ROOT" "$vol")"
@@ -709,8 +765,78 @@ for vol in "${VOLUMES[@]}"; do
   GIT_CHUNK_DIR="$GIT_OUTPUT_ROOT/$VOL_NAME"
   GIT_CHUNK_MANIFEST="$GIT_CHUNK_DIR/chunks.json"
   VOL_FAILURE_LOG="$FAILURE_LOG_PATH"
+  VOL_EXCLUDE_SOURCE_IDS_FILE="$EXCLUDE_SOURCE_IDS_FILE"
+  VOL_CONTENT_FILTER_BLOCKLIST="$CONTENT_FILTER_BLOCKLIST"
   if [[ -z "$VOL_FAILURE_LOG" ]] && (( IS_OPENROUTER_ENDPOINT )); then
     VOL_FAILURE_LOG="$WORKSPACE_ROOT/$DATASET_TAG/metadata/failed_requests_openrouter.jsonl"
+  fi
+  if [[ -z "$VOL_EXCLUDE_SOURCE_IDS_FILE" ]] && (( IS_OPENROUTER_ENDPOINT )); then
+    VOL_EXCLUDE_SOURCE_IDS_FILE="$WORKSPACE_ROOT/$DATASET_TAG/metadata/provider_content_filter_blocklist.txt"
+  fi
+  if [[ -z "$VOL_CONTENT_FILTER_BLOCKLIST" ]] && (( IS_OPENROUTER_ENDPOINT )); then
+    VOL_CONTENT_FILTER_BLOCKLIST="$VOL_EXCLUDE_SOURCE_IDS_FILE"
+  fi
+  if (( IS_OPENROUTER_ENDPOINT )) && [[ -n "$VOL_FAILURE_LOG" ]] && [[ -n "$VOL_CONTENT_FILTER_BLOCKLIST" ]]; then
+    FILTER_BOOTSTRAP_COUNT="$("$PYTHON_BIN" - "$VOL_FAILURE_LOG" "$VOL_CONTENT_FILTER_BLOCKLIST" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+failure_log = Path(sys.argv[1])
+blocklist = Path(sys.argv[2])
+
+existing = set()
+if blocklist.exists():
+    try:
+        with blocklist.open(encoding="utf-8") as handle:
+            for line in handle:
+                value = line.strip()
+                if value:
+                    existing.add(value)
+    except OSError:
+        pass
+
+added = 0
+if failure_log.exists():
+    try:
+        with failure_log.open(encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                if payload.get("error_category") != "provider_content_filter":
+                    continue
+                source_id = payload.get("source_id")
+                if not isinstance(source_id, str):
+                    continue
+                source_id = source_id.strip()
+                if not source_id or source_id in existing:
+                    continue
+                existing.add(source_id)
+                added += 1
+    except OSError:
+        pass
+
+if added > 0:
+    blocklist.parent.mkdir(parents=True, exist_ok=True)
+    with blocklist.open("w", encoding="utf-8") as handle:
+        for value in sorted(existing):
+            handle.write(value + "\n")
+
+print(added)
+PY
+)"
+    if [[ "$FILTER_BOOTSTRAP_COUNT" != "0" ]]; then
+      echo "Updated content-filter blocklist (+${FILTER_BOOTSTRAP_COUNT}) from prior failures: $VOL_CONTENT_FILTER_BLOCKLIST"
+    fi
   fi
 
   if [[ ! -d "$VOL_DIR" ]]; then
@@ -802,6 +928,18 @@ for vol in "${VOLUMES[@]}"; do
   fi
   if [[ -n "$ONLY_SOURCE_IDS_FILE" ]]; then
     CMD+=(--only-source-ids-file "$ONLY_SOURCE_IDS_FILE")
+  fi
+  if [[ -n "$VOL_EXCLUDE_SOURCE_IDS_FILE" ]]; then
+    CMD+=(--exclude-source-ids-file "$VOL_EXCLUDE_SOURCE_IDS_FILE")
+  fi
+  if [[ -n "$VOL_CONTENT_FILTER_BLOCKLIST" ]]; then
+    CMD+=(--content-filter-blocklist "$VOL_CONTENT_FILTER_BLOCKLIST")
+  fi
+  if (( LOCAL_FALLBACK_ON_CONTENT_FILTER )); then
+    CMD+=(--local-fallback-on-content-filter)
+    CMD+=(--local-fallback-endpoint "$LOCAL_FALLBACK_ENDPOINT")
+    CMD+=(--local-fallback-model "$LOCAL_FALLBACK_MODEL")
+    CMD+=(--local-fallback-api-format "$LOCAL_FALLBACK_API_FORMAT")
   fi
   if [[ -n "$INPUT_PRICE_PER_1M" ]]; then
     CMD+=(--input-price-per-1m "$INPUT_PRICE_PER_1M")

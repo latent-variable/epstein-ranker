@@ -129,6 +129,7 @@ Override at runtime with:
 - Uses `--resume` by default.
 - Skips missing volumes by default (use `--strict-missing` to fail instead).
 - For OpenRouter runs, writes failed-row logs to `data/workspaces/<dataset-tag>/metadata/failed_requests_openrouter.jsonl` by default.
+- For OpenRouter runs, automatically maintains `data/workspaces/<dataset-tag>/metadata/provider_content_filter_blocklist.txt` and skips those IDs on future cloud retries.
 
 Direct CLI example (single volume, no wrapper):
 
@@ -194,6 +195,8 @@ Notable flags:
 - `--start-pdf`, `--end-pdf`: process only a slice of PDF files (1-based, inclusive, before per-PDF part splitting). Useful for splitting a volume between local/cloud runs.
 - `--failure-log`: write failed rows (with error details) to a JSONL file for targeted retry.
 - `--only-source-ids-file`: process only listed `source_id` values (newline, JSON list, or JSONL records with `source_id`).
+- `--exclude-source-ids-file`: skip listed `source_id` values (newline, JSON list, or JSONL).
+- `--content-filter-blocklist`: append provider content-filter failures to a source-id list for future cloud skipping.
 - `run_ranker.sh --retry-failed-local`: run OpenRouter first, then automatically rerun failed source IDs locally.
 - `--chunk-size`, `--chunk-dir`, `--chunk-manifest`: control chunk splitting, where chunk files live, and where the manifest is written.
 - `--overwrite-output`: explicitly allow truncating existing files (default is to refuse unless `--resume` or unique paths are used).

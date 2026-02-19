@@ -334,6 +334,49 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--exclude-source-ids-file",
+        type=Path,
+        default=None,
+        help=(
+            "Optional newline/JSON/JSONL file listing source_id values to skip. "
+            "Rows in this set are never submitted to the model."
+        ),
+    )
+    parser.add_argument(
+        "--content-filter-blocklist",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path where provider content-filter failures are appended as "
+            "source_id entries (one per line)."
+        ),
+    )
+    parser.add_argument(
+        "--local-fallback-on-content-filter",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, provider content-filter failures on hosted endpoints are retried "
+            "immediately against a local endpoint/model."
+        ),
+    )
+    parser.add_argument(
+        "--local-fallback-endpoint",
+        default="http://localhost:5555/v1",
+        help="Endpoint used for immediate local fallback requests.",
+    )
+    parser.add_argument(
+        "--local-fallback-model",
+        default="qwen/qwen3-vl-30b",
+        help="Model ID used for immediate local fallback requests.",
+    )
+    parser.add_argument(
+        "--local-fallback-api-format",
+        choices=["auto", "openai", "chat"],
+        default="openai",
+        help="API format used for immediate local fallback requests.",
+    )
+    parser.add_argument(
         "--chunk-size",
         type=int,
         default=1000,
