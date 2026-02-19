@@ -202,12 +202,17 @@ def iter_rows(
     pdf_page_count_cache: Optional[PdfPageCountCache] = None,
 ) -> Iterable[Dict[str, Any]]:
     if path.is_dir():
+        pdf_file_index = 0
         for file_path in sorted(path.rglob(input_glob)):
             if not file_path.is_file():
                 continue
             input_kind = infer_row_input_kind(file_path, processing_mode)
             if not input_kind:
                 continue
+            source_pdf_index: Optional[int] = None
+            if input_kind == "image" and file_path.suffix.lower() == ".pdf":
+                pdf_file_index += 1
+                source_pdf_index = pdf_file_index
             rel_filename = file_path.relative_to(path).as_posix()
             if (
                 input_kind == "image"
@@ -238,6 +243,7 @@ def iter_rows(
                             "part_start_page": part_start_page,
                             "part_end_page": part_end_page,
                             "document_total_pages": total_pages,
+                            "source_pdf_index": source_pdf_index,
                             "document_part": (
                                 f"part_{part_index:04d}_of_{total_parts:04d}_p{part_start_page:05d}-{part_end_page:05d}"
                             ),
@@ -258,6 +264,7 @@ def iter_rows(
                 "part_start_page": 1,
                 "part_end_page": None,
                 "document_total_pages": None,
+                "source_pdf_index": source_pdf_index,
                 "document_part": "",
                 "analysis_filename": rel_filename,
             }
@@ -286,6 +293,7 @@ def iter_rows(
                     "part_start_page": 1,
                     "part_end_page": None,
                     "document_total_pages": None,
+                    "source_pdf_index": None,
                     "document_part": "",
                     "analysis_filename": row["filename"],
                 }
@@ -301,9 +309,35 @@ def iter_rows(
                     "part_start_page": 1,
                     "part_end_page": None,
                     "document_total_pages": None,
+                    "source_pdf_index": None,
                     "document_part": "",
                     "analysis_filename": row["filename"],
                 }
+
+
+def row_matches_pdf_range(
+    row: Dict[str, Any],
+    *,
+    start_pdf: int,
+    end_pdf: Optional[int],
+) -> bool:
+    if start_pdf <= 1 and end_pdf is None:
+        return True
+    pdf_index = row.get("source_pdf_index")
+    if not isinstance(pdf_index, int):
+        return False
+    if pdf_index < start_pdf:
+        return False
+    if end_pdf is not None and pdf_index > end_pdf:
+        return False
+    return True
+
+
+def row_is_after_pdf_range(row: Dict[str, Any], *, end_pdf: Optional[int]) -> bool:
+    if end_pdf is None:
+        return False
+    pdf_index = row.get("source_pdf_index")
+    return isinstance(pdf_index, int) and pdf_index > end_pdf
 
 
 def load_checkpoint(path: Optional[Path]) -> Set[str]:
@@ -852,12 +886,15 @@ def count_total_rows(
     input_glob: str = "*.txt",
     processing_mode: str = "auto",
     pdf_part_pages: int = 0,
+    start_pdf: int = 1,
+    end_pdf: Optional[int] = None,
     progress_label: Optional[str] = None,
     pdf_page_count_cache: Optional[PdfPageCountCache] = None,
 ) -> int:
     """Count total number of source rows for CSV or directory input."""
     last_progress_at = time.monotonic()
     scanned_rows = 0
+    selected_rows = 0
 
     def maybe_log_progress(force: bool = False) -> None:
         nonlocal last_progress_at
@@ -870,7 +907,7 @@ def count_total_rows(
         last_progress_at = now
 
     if path.is_dir():
-        for scanned_rows, _ in enumerate(
+        for idx, row in enumerate(
             iter_rows(
                 path,
                 input_glob=input_glob,
@@ -881,9 +918,15 @@ def count_total_rows(
             ),
             start=1,
         ):
+            scanned_rows = idx
+            if row_is_after_pdf_range(row, end_pdf=end_pdf):
+                break
+            if not row_matches_pdf_range(row, start_pdf=start_pdf, end_pdf=end_pdf):
+                continue
+            selected_rows += 1
             maybe_log_progress()
         maybe_log_progress(force=True)
-        return scanned_rows
+        return selected_rows
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for scanned_rows, _ in enumerate(reader, start=1):
@@ -902,6 +945,8 @@ def calculate_workload(
     completed_filenames: Set[str],
     start_row: int,
     end_row: Optional[int],
+    start_pdf: int,
+    end_pdf: Optional[int],
     progress_label: Optional[str] = None,
     pdf_page_count_cache: Optional[PdfPageCountCache] = None,
 ) -> Dict[str, int]:
@@ -936,6 +981,10 @@ def calculate_workload(
             continue
         if end_row is not None and idx > end_row:
             break
+        if row_is_after_pdf_range(row, end_pdf=end_pdf):
+            break
+        if not row_matches_pdf_range(row, start_pdf=start_pdf, end_pdf=end_pdf):
+            continue
         total += 1
         row_id = row_source_id(row)
         if completed_filenames and row_id in completed_filenames:
@@ -962,6 +1011,8 @@ def estimate_workload_fast(
     completed_source_ids: Set[str],
     start_row: int,
     end_row: Optional[int],
+    start_pdf: int,
+    end_pdf: Optional[int],
     max_rows: Optional[int],
     sample_size: int,
     pdf_page_count_cache: Optional[PdfPageCountCache] = None,
@@ -973,16 +1024,26 @@ def estimate_workload_fast(
     pdf_files = 0
     base_rows = 0
     sampled_pdf_paths: List[Path] = []
+    pdf_range_active = start_pdf > 1 or end_pdf is not None
+    seen_pdf_files = 0
     for file_path in sorted(path.rglob(input_glob)):
         if not file_path.is_file():
             continue
         input_kind = infer_row_input_kind(file_path, processing_mode)
         if not input_kind:
             continue
+        is_pdf = input_kind == "image" and file_path.suffix.lower() == ".pdf"
+        if is_pdf:
+            seen_pdf_files += 1
+            if seen_pdf_files < start_pdf:
+                continue
+            if end_pdf is not None and seen_pdf_files > end_pdf:
+                break
+        elif pdf_range_active:
+            continue
         total_files += 1
         if (
-            input_kind == "image"
-            and file_path.suffix.lower() == ".pdf"
+            is_pdf
             and pdf_part_pages > 0
         ):
             pdf_files += 1
@@ -1563,6 +1624,8 @@ def build_config_metadata(args: argparse.Namespace, prompt_source: str) -> Dict[
         "image_max_pages": args.image_max_pages,
         "pdf_pages_per_image": args.pdf_pages_per_image,
         "pdf_part_pages": args.pdf_part_pages,
+        "start_pdf": args.start_pdf,
+        "end_pdf": args.end_pdf,
         "image_render_dpi": args.image_render_dpi,
         "image_detail": args.image_detail,
         "image_output_format": args.image_output_format,
@@ -1648,6 +1711,10 @@ def write_run_metadata(
             "path": str(args.input),
             "is_directory": args.input.is_dir(),
             "input_glob": args.input_glob if args.input.is_dir() else None,
+            "start_row": getattr(args, "start_row", 1),
+            "end_row": getattr(args, "end_row", None),
+            "start_pdf": getattr(args, "start_pdf", 1) if args.input.is_dir() else None,
+            "end_pdf": getattr(args, "end_pdf", None) if args.input.is_dir() else None,
             "total_rows": total_dataset_rows if total_dataset_rows is not None else "unknown",
         },
         "workload": workload_stats,
@@ -2111,6 +2178,15 @@ def main() -> None:
         sys.exit("--start-row must be >= 1")
     if args.end_row is not None and args.end_row < args.start_row:
         sys.exit("--end-row must be greater than or equal to --start-row")
+    if args.start_pdf < 1:
+        sys.exit("--start-pdf must be >= 1")
+    if args.end_pdf is not None and args.end_pdf < args.start_pdf:
+        sys.exit("--end-pdf must be greater than or equal to --start-pdf")
+    if args.start_pdf != 1 or args.end_pdf is not None:
+        if not args.input.is_dir():
+            sys.exit("--start-pdf/--end-pdf require --input to be a directory")
+        if active_processing_mode != "image":
+            sys.exit("--start-pdf/--end-pdf require image mode (set --processing-mode image)")
     if args.chunk_size <= 0:
         if (
             args.output.exists()
@@ -2170,6 +2246,13 @@ def main() -> None:
         if args.debug_image_dir:
             print(
                 f"Image debug artifacts enabled: {args.debug_image_dir}",
+                flush=True,
+            )
+        if args.start_pdf != 1 or args.end_pdf is not None:
+            print(
+                "PDF file range: "
+                f"{args.start_pdf}-{args.end_pdf if args.end_pdf is not None else 'end'} "
+                "(1-based, pre-split).",
                 flush=True,
             )
     else:
@@ -2274,6 +2357,8 @@ def main() -> None:
             completed_filenames=completed_source_ids if args.resume else set(),
             start_row=args.start_row,
             end_row=args.end_row,
+            start_pdf=args.start_pdf,
+            end_pdf=args.end_pdf,
             progress_label=workload_progress_label,
             pdf_page_count_cache=pdf_page_count_cache,
         )
@@ -2297,6 +2382,8 @@ def main() -> None:
             completed_source_ids=completed_source_ids if args.resume else set(),
             start_row=args.start_row,
             end_row=args.end_row,
+            start_pdf=args.start_pdf,
+            end_pdf=args.end_pdf,
             max_rows=args.max_rows,
             sample_size=args.workload_estimate_sample_size,
             pdf_page_count_cache=pdf_page_count_cache,
@@ -2327,7 +2414,14 @@ def main() -> None:
                 flush=True,
             )
 
-    range_desc = f"rows {args.start_row}-{args.end_row if args.end_row else 'end'}"
+    row_range_desc = f"rows {args.start_row}-{args.end_row if args.end_row else 'end'}"
+    if args.start_pdf != 1 or args.end_pdf is not None:
+        range_desc = (
+            f"{row_range_desc} | "
+            f"PDF files {args.start_pdf}-{args.end_pdf if args.end_pdf is not None else 'end'}"
+        )
+    else:
+        range_desc = row_range_desc
     if target_total is not None:
         if target_total_is_estimate:
             print(
@@ -2350,7 +2444,11 @@ def main() -> None:
     output_router = OutputRouter(args, fieldnames)
     total_dataset_rows: Optional[int] = None
     can_reuse_workload_total = workload_scanned and (
-        args.start_row == 1 and args.end_row is None and args.max_rows is None
+        args.start_row == 1
+        and args.end_row is None
+        and args.start_pdf == 1
+        and args.end_pdf is None
+        and args.max_rows is None
     )
 
     # Count total rows in dataset for manifest metadata
@@ -2373,6 +2471,8 @@ def main() -> None:
             input_glob=args.input_glob,
             processing_mode=active_processing_mode,
             pdf_part_pages=args.pdf_part_pages,
+            start_pdf=args.start_pdf,
+            end_pdf=args.end_pdf,
             progress_label=(
                 "Counting total rows (cached page counts)"
                 if active_processing_mode == "image" and args.input.is_dir()
@@ -2395,6 +2495,8 @@ def main() -> None:
             input_glob=args.input_glob,
             processing_mode=active_processing_mode,
             pdf_part_pages=args.pdf_part_pages,
+            start_pdf=args.start_pdf,
+            end_pdf=args.end_pdf,
             progress_label=(
                 "Counting total rows for metadata (cached page counts)"
                 if active_processing_mode == "image" and args.input.is_dir()
@@ -2639,6 +2741,14 @@ def main() -> None:
                 continue
             if args.end_row is not None and idx > args.end_row:
                 break
+            if row_is_after_pdf_range(row, end_pdf=args.end_pdf):
+                break
+            if not row_matches_pdf_range(
+                row,
+                start_pdf=args.start_pdf,
+                end_pdf=args.end_pdf,
+            ):
+                continue
             if args.max_rows is not None and scheduled >= args.max_rows:
                 break
 

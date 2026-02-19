@@ -100,6 +100,46 @@ class GptRankerHelpersTest(unittest.TestCase):
         self.assertEqual(rows[2]["part_start_page"], 9)
         self.assertEqual(rows[2]["part_end_page"], 10)
 
+    def test_iter_rows_tracks_pdf_file_index_across_parts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "a.pdf").write_bytes(b"%PDF-1.4\n")
+            (root / "b.pdf").write_bytes(b"%PDF-1.4\n")
+            with mock.patch.object(gpt_ranker, "detect_pdf_page_count", side_effect=[5, 3]):
+                rows = list(
+                    gpt_ranker.iter_rows(
+                        root,
+                        input_glob="*.pdf",
+                        include_text=False,
+                        processing_mode="image",
+                        pdf_part_pages=2,
+                    )
+                )
+
+        self.assertEqual([row["source_pdf_index"] for row in rows], [1, 1, 1, 2, 2])
+
+    def test_calculate_workload_pdf_range_uses_global_row_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "a.pdf").write_bytes(b"%PDF-1.4\n")
+            (root / "b.pdf").write_bytes(b"%PDF-1.4\n")
+            with mock.patch.object(gpt_ranker, "detect_pdf_page_count", side_effect=[5, 3]):
+                stats = gpt_ranker.calculate_workload(
+                    root,
+                    input_glob="*.pdf",
+                    processing_mode="image",
+                    pdf_part_pages=2,
+                    max_rows=None,
+                    completed_filenames=set(),
+                    start_row=4,
+                    end_row=5,
+                    start_pdf=2,
+                    end_pdf=2,
+                )
+
+        self.assertEqual(stats["total"], 2)
+        self.assertEqual(stats["workload"], 2)
+
     def test_skip_reason_flags_low_quality_rows(self) -> None:
         quality = gpt_ranker.assess_text_quality("x")
         reason = gpt_ranker.build_skip_reason(quality, self.skip_args)

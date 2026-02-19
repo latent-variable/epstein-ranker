@@ -351,6 +351,24 @@ def parse_args() -> argparse.Namespace:
         help="1-based row index to stop processing (inclusive).",
     )
     parser.add_argument(
+        "--start-pdf",
+        type=int,
+        default=1,
+        help=(
+            "1-based PDF file index to start processing (directory image mode only; "
+            "applies before per-PDF part splitting)."
+        ),
+    )
+    parser.add_argument(
+        "--end-pdf",
+        type=int,
+        default=None,
+        help=(
+            "1-based PDF file index to stop processing (inclusive; directory image "
+            "mode only, before per-PDF part splitting)."
+        ),
+    )
+    parser.add_argument(
         "--max-rows",
         type=int,
         default=None,

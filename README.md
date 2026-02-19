@@ -91,22 +91,26 @@ Recommended (FTA image/PDF workflow): use the helper script.
 ./run_ranker.sh --provider openrouter --openrouter-api-key sk-or-... --volumes 1 --parallel 2
 ./run_ranker.sh --volumes 1,2,6-7 --parallel 4 --parallel-scheduling batch
 ./run_ranker.sh --provider openrouter --volumes 3 --image-max-pages 8 --pdf-pages-per-image 4
+./run_ranker.sh --volumes 10 --start-pdf 1 --end-pdf 250000
 ./run_ranker.sh --volumes 1-12 --dry-run
 ./run_ranker.sh --volumes all -- --reasoning-effort low
 ```
 
 OpenRouter key file (recommended):
 
-1. Create `/Users/linovaldovinos/Documents/LatentPlayground/EpstineFileRanker/EpsteinFileRanker-deploy/source/.env.openrouter`
-2. Add:
+1. Copy `/Users/linovaldovinos/Documents/LatentPlayground/EpstineFileRanker/EpsteinFileRanker-deploy/source/.env.template.openrouter` to `/Users/linovaldovinos/Documents/LatentPlayground/EpstineFileRanker/EpsteinFileRanker-deploy/source/.env.openrouter`
+2. Fill in values:
 
 ```bash
 OPENROUTER_API_KEY='sk-or-...'
 OPENROUTER_REFERER='https://epsteingate.org'
 OPENROUTER_TITLE='Epstein File Ranker'
+OPENROUTER_PROVIDER='alibaba'
+OPENROUTER_NO_FALLBACKS='1'
 ```
 
 `run_ranker.sh` auto-loads `.env.openrouter` (or `OPENROUTER_ENV_FILE=/custom/path`), and this file is git-ignored by default.
+`OPENROUTER_REFERER` and `OPENROUTER_TITLE` are sent as `HTTP-Referer` and `X-Title` headers (recommended by OpenRouter for app attribution/monitoring).
 
 For `--provider openrouter`, `run_ranker.sh` now auto-applies token pricing defaults for `qwen/qwen3-vl-30b-a3b-instruct`:
 - input: `$0.13 / 1M`
@@ -184,7 +188,8 @@ Notable flags:
 - `--max-rows N`: smoke-test on a small subset.
 - `--list-models`: query your endpoint for available model IDs.
 - `--rebuild-manifest`: scan `contrib/` for chunk files and rebuild `data/chunks.json` (useful if the manifest gets out of sync).
-- `--start-row`, `--end-row`: process only a slice of the dataset (ideal for collaborative chunking).
+- `--start-row`, `--end-row`: process only a slice of generated source rows (1-based, inclusive).
+- `--start-pdf`, `--end-pdf`: process only a slice of PDF files (1-based, inclusive, before per-PDF part splitting). Useful for splitting a volume between local/cloud runs.
 - `--chunk-size`, `--chunk-dir`, `--chunk-manifest`: control chunk splitting, where chunk files live, and where the manifest is written.
 - `--overwrite-output`: explicitly allow truncating existing files (default is to refuse unless `--resume` or unique paths are used).
 - `--power-watts`, `--electric-rate`, `--run-hours`: plug in your local power draw/cost to estimate total electricity usage (also configurable via the TOML file).
@@ -327,10 +332,10 @@ Open <http://localhost:9000>. Features:
 
 ## Collaborative ranking workflow
 
-Want to help process more of the corpus? Fork the repo, claim a range of rows, and submit your results:
+Want to help process more of the corpus? Fork the repo, claim either a row range or a PDF-file range, and submit your results:
 
 1. **Pick a chunk** – e.g., rows `00001–01000`, `01001–02000`, etc. Use whatever increments work. Announce the chunk (issue/Discord) so others don’t duplicate effort.
-2. **Run the ranker on that slice** using the new range flags:
+2. **Run the ranker on that slice** using range flags:
 
    ```bash
    python gpt_ranker.py \
@@ -340,6 +345,16 @@ Want to help process more of the corpus? Fork the repo, claim a range of rows, a
      --chunk-dir contrib \
      --chunk-manifest data/chunks.json \
      --known-json data/epstein_ranked.jsonl \
+     --resume
+   ```
+
+   Or split by PDF file index (pre-split) in image mode:
+
+   ```bash
+   ./run_ranker.sh \
+     --volumes 10 \
+     --start-pdf 250001 \
+     --end-pdf 500000 \
      --resume
    ```
 

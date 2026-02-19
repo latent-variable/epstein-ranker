@@ -65,6 +65,10 @@ TEMPERATURE=0.0
 SLEEP_SECONDS=0
 CHUNK_SIZE=1000
 MAX_ROWS=""
+START_ROW=""
+END_ROW=""
+START_PDF=""
+END_PDF=""
 INPUT_PRICE_PER_1M="${INPUT_PRICE_PER_1M:-}"
 OUTPUT_PRICE_PER_1M="${OUTPUT_PRICE_PER_1M:-}"
 CACHE_READ_PRICE_PER_1M="${CACHE_READ_PRICE_PER_1M:-}"
@@ -136,6 +140,10 @@ Model/runtime options:
   --cache-write-price-per-1m Cache-write token price (USD per 1M tokens)
   --sleep SECONDS            Delay between submissions (default: 0)
   --chunk-size N             Output chunk size (default: 1000)
+  --start-row N              Start at 1-based source row index
+  --end-row N                End at 1-based source row index (inclusive)
+  --start-pdf N              Start at 1-based PDF file index (pre-split)
+  --end-pdf N                End at 1-based PDF file index (inclusive, pre-split)
   --max-rows N               Limit rows for smoke test per volume
 
 Control options:
@@ -152,6 +160,7 @@ Examples:
   ./run_ranker.sh --provider openrouter --openrouter-api-key sk-... --volumes 1 --parallel 2
   ./run_ranker.sh --provider openrouter --openrouter-provider alibaba --openrouter-no-fallbacks --volumes 1
   ./run_ranker.sh --volumes 1,2,6-8 --parallel 4 --dry-run
+  ./run_ranker.sh --volumes 10 --start-pdf 1 --end-pdf 20000
   ./run_ranker.sh --volumes all --strict-missing
   ./run_ranker.sh --volumes 1 -- --reasoning-effort low --sleep 0.5
 USAGE
@@ -517,6 +526,22 @@ while [[ $# -gt 0 ]]; do
       CHUNK_SIZE="$2"
       shift 2
       ;;
+    --start-row)
+      START_ROW="$2"
+      shift 2
+      ;;
+    --end-row)
+      END_ROW="$2"
+      shift 2
+      ;;
+    --start-pdf)
+      START_PDF="$2"
+      shift 2
+      ;;
+    --end-pdf)
+      END_PDF="$2"
+      shift 2
+      ;;
     --max-rows)
       MAX_ROWS="$2"
       shift 2
@@ -736,6 +761,18 @@ for vol in "${VOLUMES[@]}"; do
   fi
   if [[ -n "$MAX_ROWS" ]]; then
     CMD+=(--max-rows "$MAX_ROWS")
+  fi
+  if [[ -n "$START_ROW" ]]; then
+    CMD+=(--start-row "$START_ROW")
+  fi
+  if [[ -n "$END_ROW" ]]; then
+    CMD+=(--end-row "$END_ROW")
+  fi
+  if [[ -n "$START_PDF" ]]; then
+    CMD+=(--start-pdf "$START_PDF")
+  fi
+  if [[ -n "$END_PDF" ]]; then
+    CMD+=(--end-pdf "$END_PDF")
   fi
   if [[ -n "$INPUT_PRICE_PER_1M" ]]; then
     CMD+=(--input-price-per-1m "$INPUT_PRICE_PER_1M")
