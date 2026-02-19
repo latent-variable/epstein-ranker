@@ -97,6 +97,15 @@ Recommended (FTA image/PDF workflow): use the helper script.
 ./run_ranker.sh --volumes all -- --reasoning-effort low
 ```
 
+Hybrid wrapper (cloud + optional inline fallback + local unresolved retry):
+
+```bash
+./run_hybrid_volume.sh --volume 11
+./run_hybrid_volume.sh --volume 11 --no-inline-local-fallback
+./run_hybrid_volume.sh --volume 11 --local-endpoint http://localhost:5555/v1 --local-model qwen/qwen3-vl-30b
+./run_hybrid_volume.sh --volume 11 --openrouter-endpoint https://openrouter.ai/api/v1 --openrouter-model qwen/qwen3-vl-30b-a3b-thinking
+```
+
 OpenRouter key file (recommended):
 
 1. Copy `/Users/linovaldovinos/Documents/LatentPlayground/EpstineFileRanker/EpsteinFileRanker-deploy/source/.env.template.openrouter` to `/Users/linovaldovinos/Documents/LatentPlayground/EpstineFileRanker/EpsteinFileRanker-deploy/source/.env.openrouter`
@@ -128,6 +137,7 @@ Override at runtime with:
 - Rebuilds a global FTA manifest at `contrib/fta/chunks.json` after each run (used by the DOJ dataset view).
 - Uses `--resume` by default.
 - Skips missing volumes by default (use `--strict-missing` to fail instead).
+- Uses one provider by default; immediate local fallback is opt-in via explicit flags.
 - For OpenRouter runs, writes failed-row logs to `data/workspaces/<dataset-tag>/metadata/failed_requests_openrouter.jsonl` by default.
 - For OpenRouter runs, automatically maintains `data/workspaces/<dataset-tag>/metadata/provider_content_filter_blocklist.txt` and skips those IDs on future cloud retries.
 
@@ -197,6 +207,8 @@ Notable flags:
 - `--only-source-ids-file`: process only listed `source_id` values (newline, JSON list, or JSONL records with `source_id`).
 - `--exclude-source-ids-file`: skip listed `source_id` values (newline, JSON list, or JSONL).
 - `--content-filter-blocklist`: append provider content-filter failures to a source-id list for future cloud skipping.
+- `--local-fallback-on-content-filter`: immediately retry provider content-filter failures on local endpoint/model (off by default).
+- `--local-fallback-on-model-output-error`: immediately retry empty/invalid JSON model-output failures on local endpoint/model (off by default).
 - `run_ranker.sh --retry-failed-local`: run OpenRouter first, then automatically rerun failed source IDs locally.
 - `--chunk-size`, `--chunk-dir`, `--chunk-manifest`: control chunk splitting, where chunk files live, and where the manifest is written.
 - `--overwrite-output`: explicitly allow truncating existing files (default is to refuse unless `--resume` or unique paths are used).

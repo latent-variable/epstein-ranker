@@ -15,8 +15,14 @@ trap 'INTERRUPTED=1' INT
 
 OPENROUTER_MODEL="${OPENROUTER_MODEL:-qwen/qwen3-vl-30b-a3b-thinking}"
 OPENROUTER_PROVIDER="${OPENROUTER_PROVIDER:-alibaba}"
+OPENROUTER_ENDPOINT="${OPENROUTER_ENDPOINT:-https://openrouter.ai/api/v1}"
+LOCAL_ENDPOINT="${LOCAL_ENDPOINT:-http://localhost:5555/v1}"
+LOCAL_MODEL="${LOCAL_MODEL:-qwen/qwen3-vl-30b}"
+LOCAL_API_FORMAT="${LOCAL_API_FORMAT:-openai}"
 CLOUD_PARALLEL_SCHEDULING="${CLOUD_PARALLEL_SCHEDULING:-window}"
 LOCAL_PARALLEL_SCHEDULING="${LOCAL_PARALLEL_SCHEDULING:-batch}"
+INLINE_LOCAL_FALLBACK=1
+INLINE_FALLBACK_MODEL_OUTPUT_ERROR=1
 
 usage() {
   cat <<'USAGE'
@@ -29,8 +35,18 @@ Required:
 Options:
   --start-pdf N              Start PDF index (1-based, pre-split)
   --end-pdf N                End PDF index (inclusive, pre-split)
+  --openrouter-endpoint URL  Cloud endpoint (default: https://openrouter.ai/api/v1)
   --openrouter-model ID      Cloud model (default: qwen/qwen3-vl-30b-a3b-thinking)
   --openrouter-provider ID   OpenRouter provider (default: alibaba)
+  --local-endpoint URL       Local endpoint (default: http://localhost:5555/v1)
+  --local-model ID           Local model (default: qwen/qwen3-vl-30b)
+  --local-api-format FMT     Local API format: auto | openai | chat (default: openai)
+  --inline-local-fallback    Enable immediate cloud->local fallback (default)
+  --no-inline-local-fallback Disable immediate cloud->local fallback
+  --inline-fallback-model-output-error
+                             Enable inline fallback for model_output_error (default)
+  --no-inline-fallback-model-output-error
+                             Disable inline fallback for model_output_error
   --cloud-scheduling MODE    window | batch (default: window)
   --local-scheduling MODE    window | batch (default: batch)
   --skip-local-retry         Do cloud pass only
@@ -38,10 +54,10 @@ Options:
   -h, --help                 Show help
 
 What it does:
-  1) Runs OpenRouter for the target volume with immediate local fallback on provider
-     content-filter blocks, and logs unresolved failures to:
+  1) Runs OpenRouter for the target volume (single provider by default in run_ranker.sh).
+     This wrapper can optionally enable immediate local fallback and logs unresolved failures to:
      data/workspaces/standardworks_epstein_files_volXXXXX/metadata/failed_requests_openrouter.jsonl
-  2) If that log has entries, reruns only those unresolved failed source IDs locally.
+  2) If that log has entries, reruns only unresolved failed source IDs locally.
 USAGE
 }
 
@@ -63,9 +79,41 @@ while [[ $# -gt 0 ]]; do
       OPENROUTER_MODEL="${2:-}"
       shift 2
       ;;
+    --openrouter-endpoint)
+      OPENROUTER_ENDPOINT="${2:-}"
+      shift 2
+      ;;
     --openrouter-provider)
       OPENROUTER_PROVIDER="${2:-}"
       shift 2
+      ;;
+    --local-endpoint)
+      LOCAL_ENDPOINT="${2:-}"
+      shift 2
+      ;;
+    --local-model)
+      LOCAL_MODEL="${2:-}"
+      shift 2
+      ;;
+    --local-api-format)
+      LOCAL_API_FORMAT="${2:-}"
+      shift 2
+      ;;
+    --inline-local-fallback)
+      INLINE_LOCAL_FALLBACK=1
+      shift
+      ;;
+    --no-inline-local-fallback)
+      INLINE_LOCAL_FALLBACK=0
+      shift
+      ;;
+    --inline-fallback-model-output-error)
+      INLINE_FALLBACK_MODEL_OUTPUT_ERROR=1
+      shift
+      ;;
+    --no-inline-fallback-model-output-error)
+      INLINE_FALLBACK_MODEL_OUTPUT_ERROR=0
+      shift
       ;;
     --cloud-scheduling)
       CLOUD_PARALLEL_SCHEDULING="${2:-}"
@@ -106,6 +154,14 @@ if [[ ! "$VOLUME" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+case "$LOCAL_API_FORMAT" in
+  auto|openai|chat) ;;
+  *)
+    echo "Invalid --local-api-format: $LOCAL_API_FORMAT (expected: auto|openai|chat)" >&2
+    exit 1
+    ;;
+esac
+
 VOL_TAG="$(printf "standardworks_epstein_files_vol%05d" "$VOLUME")"
 FAIL_LOG="data/workspaces/${VOL_TAG}/metadata/failed_requests_openrouter.jsonl"
 
@@ -117,11 +173,23 @@ CLOUD_CMD=(
   ./run_ranker.sh
   --volumes "$VOLUME"
   --provider openrouter
+  --endpoint "$OPENROUTER_ENDPOINT"
   --openrouter-model "$OPENROUTER_MODEL"
   --openrouter-provider "$OPENROUTER_PROVIDER"
   --parallel-scheduling "$CLOUD_PARALLEL_SCHEDULING"
   --failure-log "$FAIL_LOG"
 )
+if (( INLINE_LOCAL_FALLBACK )); then
+  CLOUD_CMD+=(
+    --local-fallback-on-content-filter
+    --local-fallback-endpoint "$LOCAL_ENDPOINT"
+    --local-fallback-model "$LOCAL_MODEL"
+    --local-fallback-api-format "$LOCAL_API_FORMAT"
+  )
+  if (( INLINE_FALLBACK_MODEL_OUTPUT_ERROR )); then
+    CLOUD_CMD+=(--local-fallback-on-model-output-error)
+  fi
+fi
 if [[ -n "$START_PDF" ]]; then
   CLOUD_CMD+=(--start-pdf "$START_PDF")
 fi
@@ -132,6 +200,18 @@ if (( DRY_RUN )); then
   CLOUD_CMD+=(--dry-run)
 fi
 CLOUD_CMD+=(-- --workload-scan defer)
+
+echo "[config] cloud endpoint=$OPENROUTER_ENDPOINT | model=$OPENROUTER_MODEL | provider=$OPENROUTER_PROVIDER | scheduling=$CLOUD_PARALLEL_SCHEDULING"
+echo "[config] local endpoint=$LOCAL_ENDPOINT | model=$LOCAL_MODEL | api_format=$LOCAL_API_FORMAT | local-retry-scheduling=$LOCAL_PARALLEL_SCHEDULING"
+if (( INLINE_LOCAL_FALLBACK )); then
+  if (( INLINE_FALLBACK_MODEL_OUTPUT_ERROR )); then
+    echo "[config] inline fallback=enabled | triggers=provider_content_filter,model_output_error"
+  else
+    echo "[config] inline fallback=enabled | triggers=provider_content_filter"
+  fi
+else
+  echo "[config] inline fallback=disabled"
+fi
 
 echo "[cloud] Running volume $VOLUME on OpenRouter..."
 printf '[cloud] '
@@ -158,6 +238,9 @@ LOCAL_CMD=(
   ./run_ranker.sh
   --volumes "$VOLUME"
   --provider local
+  --endpoint "$LOCAL_ENDPOINT"
+  --model "$LOCAL_MODEL"
+  --api-format "$LOCAL_API_FORMAT"
   --parallel-scheduling "$LOCAL_PARALLEL_SCHEDULING"
   --only-source-ids-file "$FAIL_LOG"
 )
