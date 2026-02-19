@@ -361,6 +361,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--local-fallback-on-model-output-error",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, model output errors (for example empty/invalid JSON responses) "
+            "on hosted endpoints are retried immediately against a local endpoint/model."
+        ),
+    )
+    parser.add_argument(
         "--local-fallback-endpoint",
         default="http://localhost:5555/v1",
         help="Endpoint used for immediate local fallback requests.",

@@ -1760,6 +1760,10 @@ class OutputRouter:
 
 def build_config_metadata(args: argparse.Namespace, prompt_source: str) -> Dict[str, Any]:
     """Build metadata dictionary from config for inclusion in requests and outputs."""
+    local_fallback_enabled = (
+        args.local_fallback_on_content_filter
+        or args.local_fallback_on_model_output_error
+    )
     metadata = {
         "endpoint": args.endpoint,
         "api_format": args.api_format,
@@ -1786,14 +1790,15 @@ def build_config_metadata(args: argparse.Namespace, prompt_source: str) -> Dict[
             str(args.content_filter_blocklist) if args.content_filter_blocklist else None
         ),
         "local_fallback_on_content_filter": args.local_fallback_on_content_filter,
+        "local_fallback_on_model_output_error": args.local_fallback_on_model_output_error,
         "local_fallback_endpoint": (
-            args.local_fallback_endpoint if args.local_fallback_on_content_filter else None
+            args.local_fallback_endpoint if local_fallback_enabled else None
         ),
         "local_fallback_model": (
-            args.local_fallback_model if args.local_fallback_on_content_filter else None
+            args.local_fallback_model if local_fallback_enabled else None
         ),
         "local_fallback_api_format": (
-            args.local_fallback_api_format if args.local_fallback_on_content_filter else None
+            args.local_fallback_api_format if local_fallback_enabled else None
         ),
         "image_render_dpi": args.image_render_dpi,
         "image_detail": args.image_detail,
@@ -2334,8 +2339,12 @@ def main() -> None:
             "Image mode is not supported with --api-format chat. "
             "Use --api-format openai or --api-format auto."
         )
-    if (
+    local_fallback_enabled = (
         args.local_fallback_on_content_filter
+        or args.local_fallback_on_model_output_error
+    )
+    if (
+        local_fallback_enabled
         and active_processing_mode == "image"
         and args.local_fallback_api_format == "chat"
     ):
@@ -2494,9 +2503,15 @@ def main() -> None:
                 "cost tracking will use provider-reported cost only (if present).",
                 flush=True,
             )
-    if args.local_fallback_on_content_filter:
+    if local_fallback_enabled:
+        trigger_labels: List[str] = []
+        if args.local_fallback_on_content_filter:
+            trigger_labels.append("provider_content_filter")
+        if args.local_fallback_on_model_output_error:
+            trigger_labels.append("model_output_error")
         print(
-            "Local content-filter fallback enabled: "
+            "Local fallback enabled: "
+            f"triggers={','.join(trigger_labels)} | "
             f"endpoint={args.local_fallback_endpoint} | "
             f"model={args.local_fallback_model} | "
             f"api_format={args.local_fallback_api_format}",
@@ -2794,6 +2809,7 @@ def main() -> None:
     content_filter_blocked_written = 0
     content_filter_blocked_seen: Set[str] = set()
     local_fallback_processed = 0
+    local_fallback_processed_by_category: Dict[str, int] = {}
     model_scored = 0
     api_rows_with_usage = 0
     api_prompt_tokens_total = 0
@@ -2868,10 +2884,17 @@ def main() -> None:
         except Exception as primary_exc:  # noqa: BLE001
             primary_error = str(primary_exc)
             primary_category = classify_failure_reason(primary_error)
-            if not (
-                args.local_fallback_on_content_filter
-                and primary_category == "provider_content_filter"
-            ):
+            trigger_enabled = (
+                (
+                    args.local_fallback_on_content_filter
+                    and primary_category == "provider_content_filter"
+                )
+                or (
+                    args.local_fallback_on_model_output_error
+                    and primary_category == "model_output_error"
+                )
+            )
+            if not trigger_enabled:
                 raise
             if args.flow_logs:
                 print(
@@ -2916,7 +2939,7 @@ def main() -> None:
     def flush_ready() -> None:
         nonlocal processed, skipped, failed, model_scored, failure_log_records, failure_source_ids
         nonlocal content_filter_blocked_written, content_filter_blocked_seen
-        nonlocal local_fallback_processed
+        nonlocal local_fallback_processed, local_fallback_processed_by_category
         while emit_order and emit_order[0] in pending_results:
             row_idx = emit_order.popleft()
             outcome = pending_results.pop(row_idx)
@@ -2983,7 +3006,12 @@ def main() -> None:
             )
             if local_fallback_meta.get("trigger") == "provider_content_filter":
                 mark_content_filter_blocked(row_key)
+            trigger = local_fallback_meta.get("trigger")
+            if isinstance(trigger, str) and trigger:
                 local_fallback_processed += 1
+                local_fallback_processed_by_category[trigger] = (
+                    local_fallback_processed_by_category.get(trigger, 0) + 1
+                )
             if checkpoint_handle:
                 checkpoint_handle.write(row_key + "\n")
                 checkpoint_handle.flush()
@@ -3372,10 +3400,14 @@ def main() -> None:
             f"{complete_msg}\nContent-filter blocklist: {args.content_filter_blocklist} "
             f"(new source ids appended this run: {content_filter_blocked_written})"
         )
-    if args.local_fallback_on_content_filter:
+    if local_fallback_enabled:
+        category_summary = ", ".join(
+            f"{key}={value}"
+            for key, value in sorted(local_fallback_processed_by_category.items())
+        ) or "none"
         complete_msg = (
-            f"{complete_msg}\nLocal content-filter fallbacks completed this run: "
-            f"{local_fallback_processed}"
+            f"{complete_msg}\nLocal fallbacks completed this run: "
+            f"{local_fallback_processed} ({category_summary})"
         )
     if cost_summary:
         complete_msg = f"{complete_msg}\n{cost_summary}"

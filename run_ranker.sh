@@ -76,6 +76,8 @@ CONTENT_FILTER_BLOCKLIST=""
 RETRY_FAILED_LOCAL=0
 LOCAL_FALLBACK_ON_CONTENT_FILTER=0
 LOCAL_FALLBACK_ON_CONTENT_FILTER_EXPLICIT=0
+LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR=0
+LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR_EXPLICIT=0
 LOCAL_FALLBACK_ENDPOINT="$LOCAL_DEFAULT_ENDPOINT"
 LOCAL_FALLBACK_MODEL="$LOCAL_DEFAULT_MODEL"
 LOCAL_FALLBACK_API_FORMAT="openai"
@@ -165,9 +167,13 @@ Model/runtime options:
                              Retry provider content-filter failures immediately on local endpoint
   --no-local-fallback-on-content-filter
                              Disable immediate local fallback
+  --local-fallback-on-model-output-error
+                             Retry model-output failures immediately on local endpoint
+  --no-local-fallback-on-model-output-error
+                             Disable model-output immediate local fallback
   --local-fallback-endpoint URL
-                             Local endpoint for immediate content-filter fallback
-  --local-fallback-model ID  Local model id for immediate content-filter fallback
+                             Local endpoint for immediate fallback retries
+  --local-fallback-model ID  Local model id for immediate fallback retries
   --local-fallback-api-format FMT
                              Local fallback API format: auto | openai | chat (default: openai)
   --max-rows N               Limit rows for smoke test per volume
@@ -599,6 +605,16 @@ while [[ $# -gt 0 ]]; do
       LOCAL_FALLBACK_ON_CONTENT_FILTER_EXPLICIT=1
       shift
       ;;
+    --local-fallback-on-model-output-error)
+      LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR=1
+      LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR_EXPLICIT=1
+      shift
+      ;;
+    --no-local-fallback-on-model-output-error)
+      LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR=0
+      LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR_EXPLICIT=1
+      shift
+      ;;
     --local-fallback-endpoint)
       LOCAL_FALLBACK_ENDPOINT="$2"
       shift 2
@@ -694,7 +710,7 @@ if [[ "$PROVIDER" == "openrouter" ]]; then
     PARALLEL_SCHEDULING="window"
   fi
   if (( IMAGE_PREFETCH_EXPLICIT == 0 )); then
-    IMAGE_PREFETCH="$MAX_PARALLEL_REQUESTS"
+    IMAGE_PREFETCH=0
   fi
   if (( PRICE_EXPLICIT == 0 )); then
     INPUT_PRICE_PER_1M="$OPENROUTER_DEFAULT_INPUT_PRICE_PER_1M"
@@ -704,6 +720,9 @@ if [[ "$PROVIDER" == "openrouter" ]]; then
   fi
   if (( LOCAL_FALLBACK_ON_CONTENT_FILTER_EXPLICIT == 0 )); then
     LOCAL_FALLBACK_ON_CONTENT_FILTER=1
+  fi
+  if (( LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR_EXPLICIT == 0 )); then
+    LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR=1
   fi
 fi
 
@@ -754,8 +773,16 @@ fi
 if [[ -n "$INPUT_PRICE_PER_1M" || -n "$OUTPUT_PRICE_PER_1M" || -n "$CACHE_READ_PRICE_PER_1M" || -n "$CACHE_WRITE_PRICE_PER_1M" ]]; then
   echo "Token pricing (USD / 1M): input=${INPUT_PRICE_PER_1M:-unset}, output=${OUTPUT_PRICE_PER_1M:-unset}, cache_read=${CACHE_READ_PRICE_PER_1M:-unset}, cache_write=${CACHE_WRITE_PRICE_PER_1M:-unset}"
 fi
-if (( LOCAL_FALLBACK_ON_CONTENT_FILTER )); then
-  echo "Local fallback on provider content-filter: endpoint=$LOCAL_FALLBACK_ENDPOINT | model=$LOCAL_FALLBACK_MODEL | api_format=$LOCAL_FALLBACK_API_FORMAT"
+if (( LOCAL_FALLBACK_ON_CONTENT_FILTER || LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR )); then
+  FALLBACK_TRIGGERS=()
+  if (( LOCAL_FALLBACK_ON_CONTENT_FILTER )); then
+    FALLBACK_TRIGGERS+=("provider_content_filter")
+  fi
+  if (( LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR )); then
+    FALLBACK_TRIGGERS+=("model_output_error")
+  fi
+  FALLBACK_TRIGGER_LIST="$(IFS=,; echo "${FALLBACK_TRIGGERS[*]}")"
+  echo "Local fallback enabled: triggers=$FALLBACK_TRIGGER_LIST | endpoint=$LOCAL_FALLBACK_ENDPOINT | model=$LOCAL_FALLBACK_MODEL | api_format=$LOCAL_FALLBACK_API_FORMAT"
 fi
 
 for vol in "${VOLUMES[@]}"; do
@@ -935,8 +962,13 @@ PY
   if [[ -n "$VOL_CONTENT_FILTER_BLOCKLIST" ]]; then
     CMD+=(--content-filter-blocklist "$VOL_CONTENT_FILTER_BLOCKLIST")
   fi
-  if (( LOCAL_FALLBACK_ON_CONTENT_FILTER )); then
-    CMD+=(--local-fallback-on-content-filter)
+  if (( LOCAL_FALLBACK_ON_CONTENT_FILTER || LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR )); then
+    if (( LOCAL_FALLBACK_ON_CONTENT_FILTER )); then
+      CMD+=(--local-fallback-on-content-filter)
+    fi
+    if (( LOCAL_FALLBACK_ON_MODEL_OUTPUT_ERROR )); then
+      CMD+=(--local-fallback-on-model-output-error)
+    fi
     CMD+=(--local-fallback-endpoint "$LOCAL_FALLBACK_ENDPOINT")
     CMD+=(--local-fallback-model "$LOCAL_FALLBACK_MODEL")
     CMD+=(--local-fallback-api-format "$LOCAL_FALLBACK_API_FORMAT")

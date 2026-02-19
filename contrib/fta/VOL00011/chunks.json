@@ -1,8 +1,8 @@
 {
   "metadata": {
     "total_dataset_rows": "unknown",
-    "rows_processed": 81779,
-    "last_updated": "2026-02-19 15:18:28"
+    "rows_processed": 81915,
+    "last_updated": "2026-02-19 15:36:34"
   },
   "chunks": [
     {
@@ -199,7 +199,7 @@
       "start_row": 36001,
       "end_row": 37000,
       "json": "contrib/fta/VOL00011/epstein_ranked_36001_37000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 37001,
@@ -259,7 +259,7 @@
       "start_row": 46001,
       "end_row": 47000,
       "json": "contrib/fta/VOL00011/epstein_ranked_46001_47000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 47001,
@@ -271,7 +271,7 @@
       "start_row": 48001,
       "end_row": 49000,
       "json": "contrib/fta/VOL00011/epstein_ranked_48001_49000.jsonl",
-      "row_count": 997
+      "row_count": 998
     },
     {
       "start_row": 49001,
@@ -289,7 +289,7 @@
       "start_row": 51001,
       "end_row": 52000,
       "json": "contrib/fta/VOL00011/epstein_ranked_51001_52000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 52001,
@@ -337,7 +337,7 @@
       "start_row": 59001,
       "end_row": 60000,
       "json": "contrib/fta/VOL00011/epstein_ranked_59001_60000.jsonl",
-      "row_count": 996
+      "row_count": 997
     },
     {
       "start_row": 60001,
@@ -367,7 +367,7 @@
       "start_row": 64001,
       "end_row": 65000,
       "json": "contrib/fta/VOL00011/epstein_ranked_64001_65000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 65001,
@@ -409,7 +409,7 @@
       "start_row": 71001,
       "end_row": 72000,
       "json": "contrib/fta/VOL00011/epstein_ranked_71001_72000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 72001,
@@ -451,19 +451,19 @@
       "start_row": 78001,
       "end_row": 79000,
       "json": "contrib/fta/VOL00011/epstein_ranked_78001_79000.jsonl",
-      "row_count": 994
+      "row_count": 999
     },
     {
       "start_row": 79001,
       "end_row": 80000,
       "json": "contrib/fta/VOL00011/epstein_ranked_79001_80000.jsonl",
-      "row_count": 940
+      "row_count": 999
     },
     {
       "start_row": 80001,
       "end_row": 81000,
       "json": "contrib/fta/VOL00011/epstein_ranked_80001_81000.jsonl",
-      "row_count": 928
+      "row_count": 993
     },
     {
       "start_row": 81001,

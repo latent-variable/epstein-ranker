@@ -9,6 +9,9 @@ START_PDF=""
 END_PDF=""
 DRY_RUN=0
 SKIP_LOCAL_RETRY=0
+INTERRUPTED=0
+
+trap 'INTERRUPTED=1' INT
 
 OPENROUTER_MODEL="${OPENROUTER_MODEL:-qwen/qwen3-vl-30b-a3b-thinking}"
 OPENROUTER_PROVIDER="${OPENROUTER_PROVIDER:-alibaba}"
@@ -136,6 +139,11 @@ printf '%q ' "${CLOUD_CMD[@]}"
 printf '\n'
 "${CLOUD_CMD[@]}"
 
+if (( INTERRUPTED )); then
+  echo "[stop] Interrupt received during cloud pass; skipping local-retry phase."
+  exit 130
+fi
+
 if (( SKIP_LOCAL_RETRY )); then
   echo "[done] Cloud pass finished (local retry skipped by flag)."
   exit 0
@@ -169,5 +177,10 @@ printf '[local-retry] '
 printf '%q ' "${LOCAL_CMD[@]}"
 printf '\n'
 "${LOCAL_CMD[@]}"
+
+if (( INTERRUPTED )); then
+  echo "[stop] Interrupt received during local-retry pass."
+  exit 130
+fi
 
 echo "[done] Hybrid run finished."
