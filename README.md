@@ -126,9 +126,11 @@ See `prompts/README.md` for details.
 
 ## Data Sources
 
-- **DOJ FTA corpus (primary):** [Epstein-Files GitHub](https://github.com/yung-megafone/Epstein-Files) — raw PDFs under `data/new_data/VOL00001...`
+- **DOJ FTA corpus (primary):** [Epstein-Files GitHub](https://github.com/yung-megafone/Epstein-Files) — raw PDFs and multimedia under `data/new_data/VOL00001...`
 - **StandardWorks index:** [standardworks.ai/epstein-files](https://standardworks.ai/epstein-files)
 - **Legacy OCR dataset:** [tensonaut/EPSTEIN_FILES_20K](https://huggingface.co/datasets/tensonaut/EPSTEIN_FILES_20K)
+
+For detailed information on how these files are organized (e.g., `NATIVES` vs `OCR`), please see the [**Data Directory README**](data/README.md).
 
 ---
 

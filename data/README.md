@@ -1,7 +1,25 @@
-# Data directory
+# Data Directory
 
-Place `EPS_FILES_20K_NOV2026.csv` (downloaded from https://huggingface.co/datasets/tensonaut/EPSTEIN_FILES_20K) in this folder.
-The file is ~100 MB and is not tracked in git.
+This directory houses the mutli-modal corpora, legacy datasets, and execution workspaces.
+
+## Structure & Organization
+
+### 1. New Data (`new_data/`)
+The primary holding area for the newly released Epstein volumes.
+- **NATIVES (`new_data/VOL0000X/NATIVES/`)**: Contains the unprocessed, original files (e.g. `.pdf`, `.mp4`, `.m4a`, `.xlsx`, `.csv`). This is the target directory for the standard processing pipelines (`run_ranker.sh`, `run_av_ranker.sh`).
+- **OCR (`new_data/OCR/VOL0000X/DATA/`)**: Contains the Optical Character Recognition (OCR) text extracts derived from the raw native documents. These are consolidated text files (e.g., `VOL00008.txt`) representing the machine-readable contents of that volume.
+
+### 2. Legacy Epstein 20K Data
+- **Location**: `EPS_FILES_20K_NOV2026.csv`
+- **Purpose**: The older dataset containing metadata from ~20,000 previously released files from `tensonaut/EPSTEIN_FILES_20K`. Used for baseline comparisons or legacy indexing. 
+- **Note**: It is ~100MB and is deliberately git-ignored. You must download it manually and place it in this folder.
+
+### 3. Workspaces (`workspaces/`)
+Isolated sandboxes for independent corpora or specific trial runs (e.g., `standardworks_epstein_files_vol00008` or `trial_tony_vol00008`). Workspaces allow for running tests, trying different prompt configurations, or processing subsets of data without overwriting the main index or output directories.
+
+---
+
+### Additional Notes
 
 You can also point `gpt_ranker.py --input` at a directory tree of `.txt` files (for example, `data/new_data`).
 

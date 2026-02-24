@@ -98,16 +98,15 @@ def extract_frames_jpeg(
     max_side: int,
     jpeg_quality: int,
 ) -> List[bytes]:
-    """Extract JPEG frames from a video file at the requested seconds-per-frame rate.
+    """Extract JPEG frames from a video file using a single batch ffmpeg call.
 
-    The number of frames extracted is: max(1, min(max_frames, int(duration / seconds_per_frame))).
-    When duration is unknown, falls back to a single first-frame extraction.
-    Uses per-frame seek (-ss) for reliability across all video lengths.
+    Uses the fps filter to extract frames at the requested rate, capped at max_frames.
+    Falls back to per-frame seek if batch extraction fails.
     Returns a list of raw JPEG bytes. Returns empty list if extraction fails.
     """
     duration = probe_duration(file_path)
     if duration is None or duration <= 0:
-        duration = None  # will attempt first-frame fallback
+        duration = None
 
     # q:v 2-5 is high quality JPEG in ffmpeg (lower = better quality)
     q_val = max(2, min(10, 10 - int(jpeg_quality * 8 / 100)))
@@ -118,45 +117,47 @@ def extract_frames_jpeg(
 
     frame_bytes: List[bytes] = []
 
-    if duration is not None and duration > 0:
-        # Derive frame count from seconds_per_frame, clamped to [1, max_frames]
-        num_frames = max(1, min(max_frames, int(duration / max(0.1, seconds_per_frame))))
-        # Sample at evenly-spaced timestamps across the video
-        # Add a small offset so we don't always land on the very first frame
-        step = duration / (num_frames + 1)
-        timestamps = [step * (i + 1) for i in range(num_frames)]
-        # Clamp so we don't seek past the end
-        timestamps = [min(ts, duration - 0.05) for ts in timestamps if ts < duration]
-        timestamps = timestamps or [0.0]
-    else:
-        timestamps = [0.0]
-
     with tempfile.TemporaryDirectory(prefix="av_ranker_frames_") as tmpdir:
-        for i, ts in enumerate(timestamps):
-            out_path = os.path.join(tmpdir, f"frame_{i:03d}.jpg")
+        out_pattern = os.path.join(tmpdir, "frame_%04d.jpg")
+
+        if duration is not None and duration > 0:
+            # Calculate fps rate from seconds_per_frame, capped by max_frames
+            fps_rate = 1.0 / max(0.1, seconds_per_frame)
+            num_frames = max(1, min(max_frames, int(duration / max(0.1, seconds_per_frame))))
+            # If fps_rate would produce more than max_frames, adjust it down
+            if duration * fps_rate > max_frames:
+                fps_rate = max_frames / duration
+
+            # Single ffmpeg call: extract all frames at once
+            vf = f"fps={fps_rate:.6f},{scale_filter}"
             cmd = [
                 "ffmpeg", "-y",
                 "-loglevel", "error",
-                "-ss", f"{ts:.4f}",
                 "-i", str(file_path),
-                "-vf", scale_filter,
-                "-frames:v", "1",
+                "-vf", vf,
+                "-frames:v", str(num_frames),
                 "-q:v", str(q_val),
-                out_path,
+                out_pattern,
             ]
             try:
-                subprocess.run(cmd, capture_output=True, timeout=60, check=False)
+                subprocess.run(
+                    cmd, capture_output=True,
+                    timeout=max(120, int(duration * 0.5)),
+                    check=False,
+                )
             except (subprocess.TimeoutExpired, FileNotFoundError):
-                continue
-            p = Path(out_path)
-            if p.exists() and p.stat().st_size > 100:
-                try:
-                    frame_bytes.append(p.read_bytes())
-                except OSError:
-                    pass
+                pass
 
+            # Read all extracted frames in order
+            for p in sorted(Path(tmpdir).glob("frame_*.jpg")):
+                if p.stat().st_size > 100:
+                    try:
+                        frame_bytes.append(p.read_bytes())
+                    except OSError:
+                        pass
+
+        # Fallback: single first frame
         if not frame_bytes:
-            # Last-resort fallback: first frame without seeking
             fallback_path = os.path.join(tmpdir, "fallback.jpg")
             cmd_fb = [
                 "ffmpeg", "-y",
@@ -287,11 +288,46 @@ def convert_audio_to_wav(file_path: Path, *, tmpdir: str) -> Optional[Path]:
     return None
 
 
+SILENCE_THRESHOLD_DB = -50.0  # below this mean volume = effectively silent
+
+
+def detect_silence(wav_path: Path) -> Tuple[bool, float]:
+    """Check if a WAV file is effectively silent using ffmpeg volumedetect.
+
+    Returns (is_silent, mean_volume_db). Checks only the first 30 seconds
+    for speed on long files.
+    """
+    cmd = [
+        "ffmpeg",
+        "-t", "30",          # only analyze first 30 seconds
+        "-i", str(wav_path),
+        "-af", "volumedetect",
+        "-f", "null", "-",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        stderr = result.stderr
+        for line in stderr.splitlines():
+            if "mean_volume:" in line:
+                # e.g. "  mean_volume: -91.0 dB"
+                parts = line.split("mean_volume:")
+                if len(parts) == 2:
+                    db_str = parts[1].strip().replace("dB", "").strip()
+                    try:
+                        mean_db = float(db_str)
+                        return (mean_db < SILENCE_THRESHOLD_DB, mean_db)
+                    except ValueError:
+                        pass
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    # If detection fails, assume not silent (safe default)
+    return (False, 0.0)
+
+
 # ---------------------------------------------------------------------------
 # Transcription (Whisper)
 # ---------------------------------------------------------------------------
 
-_whisper_lock = threading.Lock()
 _whisper_model_cache: Dict[str, Any] = {}
 
 
@@ -300,38 +336,48 @@ def transcribe_audio(
     *,
     whisper_model: str = DEFAULT_WHISPER_MODEL,
 ) -> Optional[str]:
-    """Transcribe a WAV file using OpenAI Whisper. Returns text or None."""
+    """Transcribe a WAV file using OpenAI Whisper or MLX-Whisper. Returns text or None."""
     global _whisper_model_cache
+    
+    use_mlx = False
+    import sys, platform
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        try:
+            import mlx_whisper
+            use_mlx = True
+        except ImportError:
+            pass
+
+    if not use_mlx:
+        try:
+            import whisper  # type: ignore
+        except ImportError:
+            return None
+
+    if use_mlx:
+        try:
+            model_path = f"mlx-community/whisper-{whisper_model}-mlx"
+            result = mlx_whisper.transcribe(str(wav_path), path_or_hf_repo=model_path, verbose=None)
+            text = result.get("text", "").strip()
+            return text if text else None
+        except Exception as e:
+            print(f"  [error] MLX Whisper transcription failed for {wav_path}: {e}", file=sys.stderr)
+            return None
+
+    # Fallback PyTorch Whisper
+    if whisper_model not in _whisper_model_cache:
+        try:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=FutureWarning, message=".*weights_only.*")
+                _whisper_model_cache[whisper_model] = whisper.load_model(whisper_model)
+        except Exception as e:
+            print(f"  [error] Failed to load Whisper model {whisper_model}: {e}", file=sys.stderr)
+            return None
+    model = _whisper_model_cache[whisper_model]
+
     try:
-        import whisper  # type: ignore
-    except ImportError:
-        return None
-
-    with _whisper_lock:
-        if whisper_model not in _whisper_model_cache:
-            try:
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=FutureWarning, message=".*weights_only.*")
-                    _whisper_model_cache[whisper_model] = whisper.load_model(whisper_model)
-            except Exception as e:
-                print(f"  [error] Failed to load Whisper model {whisper_model}: {e}", file=sys.stderr)
-                return None
-        model = _whisper_model_cache[whisper_model]
-
-    try:
-        # Suppress whisper progress bars and ffmpeg spam
-        import os, sys
-        old_stdout = sys.stdout
-        with open(os.devnull, "w") as devnull:
-            sys.stdout = devnull
-            try:
-                # Must hold lock during inference: PyTorch Linear is not thread-safe by default for Whisper
-                with _whisper_lock:
-                    result = model.transcribe(str(wav_path), fp16=False, verbose=None)
-            finally:
-                sys.stdout = old_stdout
-
+        result = model.transcribe(str(wav_path), fp16=False, verbose=None)
         text = result.get("text", "").strip()
         return text if text else None
     except Exception as e:
@@ -558,6 +604,103 @@ def call_av_model(
 # File processing
 # ---------------------------------------------------------------------------
 
+def prep_av_file(
+    file_path: Path,
+    *,
+    seconds_per_frame: float,
+    max_frames: int,
+    frame_max_side: int,
+    frame_jpeg_quality: int,
+    enable_transcription: bool,
+    grid_cols: int = DEFAULT_GRID_COLS,
+    grid_rows: int = DEFAULT_GRID_ROWS,
+    enable_grid: bool = True,
+) -> Dict[str, Any]:
+    """Phase 1: Extract frames + audio WAV (no whisper). Fully parallelizable."""
+    suffix = file_path.suffix.lower()
+    is_audio_only = suffix in AV_AUDIO_SUFFIXES
+    filename = file_path.name
+
+    duration_seconds = probe_duration(file_path)
+    frame_data_urls: List[str] = []
+    total_raw_frames = 0
+    frames_per_grid = 0
+    wav_path: Optional[Path] = None
+    # Keep tmpdir alive so wav_path remains valid for whisper phase
+    tmpdir_obj = tempfile.TemporaryDirectory(prefix="av_ranker_proc_")
+    tmpdir = tmpdir_obj.name
+    prep_start = time.monotonic()
+
+    # --- Extract frames (video only) ---
+    if not is_audio_only:
+        frame_bytes_list = extract_frames_jpeg(
+            file_path,
+            seconds_per_frame=seconds_per_frame,
+            max_frames=max_frames,
+            max_side=frame_max_side,
+            jpeg_quality=frame_jpeg_quality,
+        )
+        total_raw_frames = len(frame_bytes_list)
+
+        # --- Composite into grids if enabled ---
+        frames_per_grid = grid_cols * grid_rows
+        if enable_grid and frames_per_grid > 1 and len(frame_bytes_list) > 1:
+            grid_cell = max(256, frame_max_side // grid_cols)
+            grid_bytes = compose_frame_grid(
+                frame_bytes_list,
+                grid_cols=grid_cols,
+                grid_rows=grid_rows,
+                cell_size=grid_cell,
+                jpeg_quality=frame_jpeg_quality,
+            )
+            for gb in grid_bytes:
+                frame_data_urls.append(
+                    encode_image_bytes_to_data_url(gb, mime="image/jpeg")
+                )
+        else:
+            frames_per_grid = 0
+            for fb in frame_bytes_list:
+                frame_data_urls.append(
+                    encode_image_bytes_to_data_url(fb, mime="image/jpeg")
+                )
+
+    # --- Extract audio WAV (but don't transcribe yet) ---
+    audio_silent = False
+    mean_volume_db = 0.0
+    if enable_transcription:
+        if is_audio_only:
+            wav_path = convert_audio_to_wav(file_path, tmpdir=tmpdir)
+        else:
+            wav_path = extract_audio_track(file_path, tmpdir=tmpdir)
+
+        # Check if audio is actually silent before queuing for whisper
+        if wav_path:
+            audio_silent, mean_volume_db = detect_silence(wav_path)
+            if audio_silent:
+                wav_path = None  # skip whisper for silent audio
+
+    prep_seconds = time.monotonic() - prep_start
+
+    return {
+        "file_path": file_path,
+        "filename": filename,
+        "suffix": suffix,
+        "is_audio_only": is_audio_only,
+        "duration_seconds": duration_seconds,
+        "frame_data_urls": frame_data_urls,
+        "total_raw_frames": total_raw_frames if not is_audio_only else 0,
+        "frames_per_grid": frames_per_grid if not is_audio_only else 0,
+        "wav_path": wav_path,
+        "audio_silent": audio_silent,
+        "mean_volume_db": mean_volume_db,
+        "prep_seconds": prep_seconds,
+        "enable_grid": enable_grid,
+        "grid_cols": grid_cols,
+        "grid_rows": grid_rows,
+        "_tmpdir_obj": tmpdir_obj,  # prevent cleanup until we're done
+    }
+
+
 def process_av_file(
     file_path: Path,
     *,
@@ -583,77 +726,41 @@ def process_av_file(
     grid_rows: int = DEFAULT_GRID_ROWS,
     enable_grid: bool = True,
 ) -> Dict[str, Any]:
-    """Process a single AV file: extract frames + transcript, then call the model."""
-    suffix = file_path.suffix.lower()
-    is_audio_only = suffix in AV_AUDIO_SUFFIXES
-    filename = file_path.name
+    """Legacy single-call interface: prep + whisper + API in one shot."""
+    prep = prep_av_file(
+        file_path,
+        seconds_per_frame=seconds_per_frame,
+        max_frames=max_frames,
+        frame_max_side=frame_max_side,
+        frame_jpeg_quality=frame_jpeg_quality,
+        enable_transcription=enable_transcription,
+        grid_cols=grid_cols,
+        grid_rows=grid_rows,
+        enable_grid=enable_grid,
+    )
 
-    duration_seconds = probe_duration(file_path)
-    frame_data_urls: List[str] = []
+    # Whisper phase
     transcript: Optional[str] = None
-    total_raw_frames = 0
-    frames_per_grid = 0
-    prep_start = time.monotonic()
+    whisper_seconds = 0.0
+    if prep["wav_path"]:
+        t0_w = time.monotonic()
+        transcript = transcribe_audio(prep["wav_path"], whisper_model=whisper_model)
+        whisper_seconds = time.monotonic() - t0_w
 
-    with tempfile.TemporaryDirectory(prefix="av_ranker_proc_") as tmpdir:
-        # --- Extract frames (video only) ---
-        if not is_audio_only:
-            frame_bytes_list = extract_frames_jpeg(
-                file_path,
-                seconds_per_frame=seconds_per_frame,
-                max_frames=max_frames,
-                max_side=frame_max_side,
-                jpeg_quality=frame_jpeg_quality,
-            )
-            total_raw_frames = len(frame_bytes_list)
-
-            # --- Composite into grids if enabled ---
-            frames_per_grid = grid_cols * grid_rows
-            if enable_grid and frames_per_grid > 1 and len(frame_bytes_list) > 1:
-                grid_cell = max(256, frame_max_side // grid_cols)
-                grid_bytes = compose_frame_grid(
-                    frame_bytes_list,
-                    grid_cols=grid_cols,
-                    grid_rows=grid_rows,
-                    cell_size=grid_cell,
-                    jpeg_quality=frame_jpeg_quality,
-                )
-                for gb in grid_bytes:
-                    frame_data_urls.append(
-                        encode_image_bytes_to_data_url(gb, mime="image/jpeg")
-                    )
-            else:
-                frames_per_grid = 0  # signal: no grid in use
-                for fb in frame_bytes_list:
-                    frame_data_urls.append(
-                        encode_image_bytes_to_data_url(fb, mime="image/jpeg")
-                    )
-
-        # --- Extract + transcribe audio ---
-        whisper_seconds = 0.0
-        if enable_transcription:
-            if is_audio_only:
-                wav_path = convert_audio_to_wav(file_path, tmpdir=tmpdir)
-            else:
-                wav_path = extract_audio_track(file_path, tmpdir=tmpdir)
-
-            if wav_path:
-                t0_w = time.monotonic()
-                transcript = transcribe_audio(wav_path, whisper_model=whisper_model)
-                whisper_seconds = time.monotonic() - t0_w
-
-    prep_seconds = time.monotonic() - prep_start
-    total_raw_frames = total_raw_frames if not is_audio_only else 0
-    frames_per_grid = frames_per_grid if not is_audio_only else 0
+    # Clean up temp dir
+    try:
+        prep["_tmpdir_obj"].cleanup()
+    except Exception:
+        pass
 
     user_content = build_av_user_message(
-        filename,
-        frame_data_urls=frame_data_urls,
+        prep["filename"],
+        frame_data_urls=prep["frame_data_urls"],
         transcript=transcript,
-        duration_seconds=duration_seconds,
-        is_audio_only=is_audio_only,
-        total_frames=total_raw_frames,
-        frames_per_grid=frames_per_grid,
+        duration_seconds=prep["duration_seconds"],
+        is_audio_only=prep["is_audio_only"],
+        total_frames=prep["total_raw_frames"],
+        frames_per_grid=prep["frames_per_grid"],
     )
 
     result = call_av_model(
@@ -672,24 +779,23 @@ def process_av_file(
         request_semaphore=request_semaphore,
     )
 
-    # Attach AV metadata
     result["_av_meta"] = {
-        "filename": filename,
-        "suffix": suffix,
-        "file_type": "audio" if is_audio_only else "video",
+        "filename": prep["filename"],
+        "suffix": prep["suffix"],
+        "file_type": "audio" if prep["is_audio_only"] else "video",
         "file_size_bytes": file_path.stat().st_size,
-        "duration_seconds": duration_seconds,
-        "frames_extracted": total_raw_frames,
-        "images_sent": len(frame_data_urls),
-        "grid_layout": f"{grid_cols}x{grid_rows}" if (enable_grid and frames_per_grid > 1) else "none",
+        "duration_seconds": prep["duration_seconds"],
+        "frames_extracted": prep["total_raw_frames"],
+        "images_sent": len(prep["frame_data_urls"]),
+        "grid_layout": f"{grid_cols}x{grid_rows}" if (enable_grid and prep["frames_per_grid"] > 1) else "none",
         "seconds_per_frame_requested": seconds_per_frame,
         "has_transcript": transcript is not None,
         "transcript_chars": len(transcript) if transcript else 0,
         "whisper_seconds": round(whisper_seconds, 4),
-        "prep_seconds": round(prep_seconds, 4),
+        "prep_seconds": round(prep["prep_seconds"], 4),
     }
     if result["_request_meta"]:
-        result["_request_meta"]["prep_seconds"] = round(prep_seconds, 4)
+        result["_request_meta"]["prep_seconds"] = round(prep["prep_seconds"], 4)
 
     return result
 
@@ -725,6 +831,7 @@ def build_output_row(
     file_path: Path,
     volume: Optional[int],
     result: Dict[str, Any],
+    transcript: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assemble a JSONL output row matching the PDF pipeline schema."""
     schema_keys = [
@@ -739,9 +846,80 @@ def build_output_row(
     }
     for key in schema_keys:
         row[key] = result.get(key, [] if key != "importance_score" else 0)
+    row["text"] = transcript.strip() if transcript else ""
     row["_av_meta"] = result.get("_av_meta", {})
     row["_request_meta"] = result.get("_request_meta", {})
     return row
+
+
+# ---------------------------------------------------------------------------
+# OCR transcript output
+# ---------------------------------------------------------------------------
+
+_OCR_PLACEHOLDER_PATTERNS = {"no images produced", "native placeholder"}
+
+
+def _find_ocr_path(source_id: str, data_dir: Path, volume: int) -> Optional[Path]:
+    """Find the existing OCR .txt path for a source ID (in any subdirectory)."""
+    vol_tag = f"VOL{volume:05d}"
+    ocr_root = data_dir / "OCR" / vol_tag / "IMAGES"
+    if not ocr_root.is_dir():
+        return None
+    for subdir in sorted(ocr_root.iterdir()):
+        if not subdir.is_dir():
+            continue
+        txt_path = subdir / f"{source_id}.txt"
+        if txt_path.exists():
+            return txt_path
+    return None
+
+
+def _is_ocr_placeholder(txt_path: Path) -> bool:
+    """Check if an OCR file is just a placeholder with no real content."""
+    try:
+        text = txt_path.read_text(encoding="utf-8", errors="replace").strip().lower()
+        return any(p in text for p in _OCR_PLACEHOLDER_PATTERNS) or len(text) < 10
+    except OSError:
+        return True
+
+
+def write_transcript_to_ocr(
+    source_id: str,
+    transcript: Optional[str],
+    data_dir: Path,
+    volume: int,
+) -> Optional[Path]:
+    """Write whisper transcript into the OCR folder, replacing placeholder files.
+
+    Only writes if we have a real transcript (>5 chars) and the existing OCR
+    file is a placeholder or doesn't exist.
+    """
+    if not transcript or len(transcript.strip()) <= 5:
+        return None
+
+    txt_path = _find_ocr_path(source_id, data_dir, volume)
+    if txt_path is not None:
+        # Only overwrite placeholders, not real OCR content
+        if not _is_ocr_placeholder(txt_path):
+            return None
+    else:
+        # No existing file — create in the last subdirectory
+        vol_tag = f"VOL{volume:05d}"
+        ocr_root = data_dir / "OCR" / vol_tag / "IMAGES"
+        ocr_root.mkdir(parents=True, exist_ok=True)
+        subdirs = sorted([d for d in ocr_root.iterdir() if d.is_dir()])
+        if subdirs:
+            target_dir = subdirs[-1]
+        else:
+            target_dir = ocr_root / "0001"
+            target_dir.mkdir(exist_ok=True)
+        txt_path = target_dir / f"{source_id}.txt"
+
+    try:
+        txt_path.write_text(transcript.strip(), encoding="utf-8")
+        return txt_path
+    except OSError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -1208,19 +1386,135 @@ def main() -> int:
     print(f"[config] max_parallel={args.max_parallel} | chunk_size={args.chunk_size} | output_dir={out_vol_dir}")
     print()
 
+    import queue as _queue
+
     semaphore = threading.Semaphore(args.max_parallel)
     stats = Stats()
     output_lock = threading.Lock()
 
-    def process_one(sid: str, fp: Path) -> None:
+    total_pending = len(pending)
+    pipeline_start = time.monotonic()
+    files_done = 0
+
+    def _eta_str(done: int) -> str:
+        if done == 0:
+            return "--:--"
+        elapsed = time.monotonic() - pipeline_start
+        avg = elapsed / done
+        remaining = avg * (total_pending - done)
+        return f"{int(remaining // 60):02d}:{int(remaining % 60):02d}"
+
+    # Queues connecting the three pipeline stages
+    whisper_q: _queue.Queue = _queue.Queue()   # prep → whisper
+    api_q: _queue.Queue = _queue.Queue()        # whisper → api
+    _SENTINEL = None  # signals "no more items"
+
+    # ---------------------------------------------------------------
+    # Stage 1: Prep workers — extract frames + audio WAV (parallel)
+    # ---------------------------------------------------------------
+    def prep_worker(sid: str, fp: Path) -> None:
+        try:
+            prep = prep_av_file(
+                fp,
+                seconds_per_frame=args.seconds_per_frame,
+                max_frames=args.max_frames,
+                frame_max_side=args.frame_max_side,
+                frame_jpeg_quality=args.frame_jpeg_quality,
+                enable_transcription=enable_transcription,
+                grid_cols=args.grid_cols,
+                grid_rows=args.grid_rows,
+                enable_grid=enable_grid,
+            )
+            dur = prep["duration_seconds"]
+            dur_str = f"{dur:.0f}s" if dur else "?"
+            ftype = "audio" if prep["is_audio_only"] else "video"
+            if prep.get("audio_silent"):
+                needs_tx = f"SILENT ({prep['mean_volume_db']:.0f}dB)"
+            elif prep["wav_path"]:
+                needs_tx = f"yes ({prep['mean_volume_db']:.0f}dB)"
+            else:
+                needs_tx = "no-audio"
+            print(
+                f"  [prep] {sid:<12} {ftype:<5} dur={dur_str:<6} "
+                f"frames={prep['total_raw_frames']}/{len(prep['frame_data_urls'])}imgs "
+                f"whisper={needs_tx} | {prep['prep_seconds']:.1f}s"
+            )
+            whisper_q.put((sid, fp, prep))
+        except Exception as exc:
+            print(f"  [prep-fail] {sid} {exc}", file=sys.stderr)
+            whisper_q.put((sid, fp, None))
+
+    def run_prep_pool() -> None:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_parallel) as executor:
+            futures = [executor.submit(prep_worker, sid, fp) for sid, fp in pending]
+            for f in concurrent.futures.as_completed(futures):
+                try:
+                    f.result()
+                except Exception as exc:
+                    print(f"  [prep-error] {exc}", file=sys.stderr)
+        whisper_q.put(_SENTINEL)
+
+    # ---------------------------------------------------------------
+    # Stage 2: Whisper thread — sequential transcription (single thread)
+    # ---------------------------------------------------------------
+    whisper_count = [0]
+
+    def run_whisper_thread() -> None:
+        while True:
+            item = whisper_q.get()
+            if item is _SENTINEL:
+                api_q.put(_SENTINEL)
+                break
+            sid, fp, prep = item
+            if prep is None:
+                # Prep failed — pass through so it's counted as a failure
+                api_q.put((sid, fp, prep, None, 0.0))
+                continue
+
+            transcript: Optional[str] = None
+            whisper_sec = 0.0
+            if prep.get("wav_path"):
+                whisper_count[0] += 1
+                dur = prep["duration_seconds"]
+                dur_str = f"{dur:.0f}s" if dur else "?"
+                t0_w = time.monotonic()
+                transcript = transcribe_audio(prep["wav_path"], whisper_model=args.whisper_model)
+                whisper_sec = time.monotonic() - t0_w
+                tx_len = len(transcript) if transcript else 0
+                print(f"  [whisper] {sid:<12} dur={dur_str:<6} tx={tx_len}c | {whisper_sec:.1f}s")
+
+            # Clean up temp dir now that whisper is done with this file
+            try:
+                prep["_tmpdir_obj"].cleanup()
+            except Exception:
+                pass
+
+            api_q.put((sid, fp, prep, transcript, whisper_sec))
+
+    # ---------------------------------------------------------------
+    # Stage 3: API workers — parallel model requests
+    # ---------------------------------------------------------------
+    def api_worker(sid: str, fp: Path, prep: Dict[str, Any],
+                   transcript: Optional[str], whisper_sec: float) -> None:
+        nonlocal files_done
         t0 = time.monotonic()
         try:
-            result = process_av_file(
-                fp,
-                system_prompt=system_prompt,
+            user_content = build_av_user_message(
+                prep["filename"],
+                frame_data_urls=prep["frame_data_urls"],
+                transcript=transcript,
+                duration_seconds=prep["duration_seconds"],
+                is_audio_only=prep["is_audio_only"],
+                total_frames=prep["total_raw_frames"],
+                frames_per_grid=prep["frames_per_grid"],
+            )
+
+            result = call_av_model(
                 endpoint=args.endpoint,
                 model=args.model,
                 api_key=api_key,
+                system_prompt=system_prompt,
+                user_content=user_content,
                 max_output_tokens=args.max_output_tokens,
                 timeout=args.timeout,
                 max_retries=args.max_retries,
@@ -1229,55 +1523,100 @@ def main() -> int:
                 x_title=x_title,
                 openrouter_provider=openrouter_provider,
                 request_semaphore=semaphore,
-                seconds_per_frame=args.seconds_per_frame,
-                max_frames=args.max_frames,
-                frame_max_side=args.frame_max_side,
-                frame_jpeg_quality=args.frame_jpeg_quality,
-                whisper_model=args.whisper_model,
-                enable_transcription=enable_transcription,
-                grid_cols=args.grid_cols,
-                grid_rows=args.grid_rows,
-                enable_grid=enable_grid,
             )
-            row = build_output_row(sid, fp, args.volume, result)
+
+            grid_layout = (
+                f"{prep['grid_cols']}x{prep['grid_rows']}"
+                if (prep["enable_grid"] and prep["frames_per_grid"] > 1) else "none"
+            )
+            result["_av_meta"] = {
+                "filename": prep["filename"],
+                "suffix": prep["suffix"],
+                "file_type": "audio" if prep["is_audio_only"] else "video",
+                "file_size_bytes": fp.stat().st_size,
+                "duration_seconds": prep["duration_seconds"],
+                "frames_extracted": prep["total_raw_frames"],
+                "images_sent": len(prep["frame_data_urls"]),
+                "grid_layout": grid_layout,
+                "seconds_per_frame_requested": args.seconds_per_frame,
+                "has_transcript": transcript is not None,
+                "transcript_chars": len(transcript) if transcript else 0,
+                "whisper_seconds": round(whisper_sec, 4),
+                "prep_seconds": round(prep["prep_seconds"], 4),
+            }
+            if result.get("_request_meta"):
+                result["_request_meta"]["prep_seconds"] = round(prep["prep_seconds"], 4)
+
+            row = build_output_row(sid, fp, args.volume, result, transcript=transcript)
             row_json = json.dumps(row, ensure_ascii=False)
+
+            # Write transcript to OCR folder for text search
+            write_transcript_to_ocr(sid, transcript, args.data_dir, args.volume)
+
+            req_secs = result.get("_request_meta", {}).get("request_seconds", 0.0) or 0.0
+            stats.record_success(req_secs, prep["prep_seconds"])
+            score = result.get("importance_score", "?")
+
+            frames_out = len(prep["frame_data_urls"])
+            tx_len = len(transcript) if transcript else 0
+            dur = prep["duration_seconds"]
+            dur_str = f"{dur:.0f}s" if dur else "?"
+            ftype = "A" if prep["is_audio_only"] else "V"
+
+            tx_str = f"tx={tx_len}c ({whisper_sec:.1f}s)" if transcript is not None else "tx=none"
+            frames_str = f"f={prep['total_raw_frames']}/{frames_out}img" if frames_out else "f=0"
+            api_sec = time.monotonic() - t0
 
             with output_lock:
                 writer.write_row(row_json)
                 append_checkpoint(checkpoint_path, sid)
-
-            req_secs = result.get("_request_meta", {}).get("request_seconds", 0.0) or 0.0
-            prep_secs = result.get("_av_meta", {}).get("prep_seconds", 0.0) or 0.0
-            stats.record_success(req_secs, prep_secs)
-            score = result.get("importance_score", "?")
-            
-            # Formatted log with exactly what was extracted
-            frames_raw = result.get("_av_meta", {}).get("frames_extracted", 0)
-            frames_out = result.get("_av_meta", {}).get("images_sent", 0)
-            tx_len = result.get("_av_meta", {}).get("transcript_chars", 0)
-            has_tx = result.get("_av_meta", {}).get("has_transcript", False)
-            whisper_sec = result.get("_av_meta", {}).get("whisper_seconds", 0.0)
-            
-            tx_str = f"tx={tx_len}c ({whisper_sec:.1f}s)" if has_tx else "tx=none"
-            frames_str = f"frames={frames_raw}/{frames_out}imgs" if frames_out else "frames=0/0imgs"
-            elapsed = time.monotonic() - t0
-            
-            print(
-                f"  [ok] {sid:<12} score={score:<2} | {frames_str:<21} | {tx_str:<20} | total={elapsed:.1f}s"
-            )
+                files_done += 1
+                eta = _eta_str(files_done)
+                print(
+                    f"  [{files_done}/{total_pending} ETA {eta}] [ok] {sid:<12} "
+                    f"{ftype} {dur_str:<6} score={score:<2} | {frames_str:<16} | {tx_str:<20} "
+                    f"| prep={prep['prep_seconds']:.1f}s whisper={whisper_sec:.1f}s api={api_sec:.1f}s"
+                )
         except Exception as exc:
             stats.record_failure()
-            elapsed = time.monotonic() - t0
-            print(f"  [fail] {sid}  {elapsed:.1f}s  {exc}", file=sys.stderr)
+            print(f"  [fail] {sid} {exc}", file=sys.stderr)
 
-    print(f"[run] Processing {len(pending)} file(s) with up to {args.max_parallel} concurrent workers...")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_parallel) as executor:
-        futures = [executor.submit(process_one, sid, fp) for sid, fp in pending]
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                future.result()
-            except Exception as exc:
-                print(f"[executor] Unhandled exception: {exc}", file=sys.stderr)
+    def run_api_pool() -> None:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_parallel) as executor:
+            futures: list = []
+            while True:
+                item = api_q.get()
+                if item is _SENTINEL:
+                    break
+                sid, fp, prep, transcript, whisper_sec = item
+                if prep is None:
+                    stats.record_failure()
+                    continue
+                futures.append(executor.submit(api_worker, sid, fp, prep, transcript, whisper_sec))
+            # Wait for all in-flight API calls to finish
+            for f in concurrent.futures.as_completed(futures):
+                try:
+                    f.result()
+                except Exception as exc:
+                    print(f"  [api-error] {exc}", file=sys.stderr)
+
+    # ---------------------------------------------------------------
+    # Launch the streaming pipeline
+    # ---------------------------------------------------------------
+    print(f"[run] Streaming pipeline: prep({args.max_parallel} workers) → whisper(1 thread) → api({args.max_parallel} workers)")
+    print(f"[run] Processing {total_pending} file(s)...")
+
+    prep_thread = threading.Thread(target=run_prep_pool, daemon=True)
+    whisper_thread = threading.Thread(target=run_whisper_thread, daemon=True)
+    api_thread = threading.Thread(target=run_api_pool, daemon=True)
+
+    prep_thread.start()
+    whisper_thread.start()
+    api_thread.start()
+
+    prep_thread.join()
+    whisper_thread.join()
+    api_thread.join()
 
     writer.close()
     manifest_path = writer.write_manifest()
