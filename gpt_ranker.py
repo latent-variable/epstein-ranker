@@ -2185,9 +2185,21 @@ def build_output_records(
     if args.include_action_items:
         csv_row["action_items"] = "; ".join(action_items)
 
+    # Infer file_type from filename extension for downstream consumers.
+    _fn = source_row.get("filename", "")
+    _ext = _fn[_fn.rfind("."):].lower() if "." in _fn else ""
+    _file_type = "pdf"
+    if _ext in {".avi", ".mp4", ".mov", ".m4v", ".wmv", ".vob", ".ts", ".3gp", ".mkv", ".flv"}:
+        _file_type = "video"
+    elif _ext in {".m4a", ".wav", ".opus", ".mp3", ".amr", ".aac", ".ogg", ".flac"}:
+        _file_type = "audio"
+    elif _ext in {".docx", ".xlsx", ".doc", ".xls", ".csv", ".ppt", ".pptx", ".ods", ".odt"}:
+        _file_type = "office"
+
     json_record: Dict[str, Any] = {
         "source_id": source_id,
         "filename": source_row["filename"],
+        "file_type": _file_type,
         "document_part": document_part,
         "part_index": part_index,
         "part_total": part_total,
