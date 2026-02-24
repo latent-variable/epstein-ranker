@@ -184,6 +184,8 @@ def discover_office_files(
                 continue
             if file_path.suffix.lower() not in suffixes:
                 continue
+            if file_path.stat().st_size == 0:
+                continue  # skip empty placeholder files
             m = EFTA_PATTERN.search(file_path.stem)
             if not m:
                 continue

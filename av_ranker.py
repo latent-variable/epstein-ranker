@@ -50,7 +50,8 @@ AV_ALL_SUFFIXES = AV_VIDEO_SUFFIXES | AV_AUDIO_SUFFIXES
 DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "nvidia/nemotron-nano-12b-v2-vl:free"
 DEFAULT_SYSTEM_PROMPT_PATH = Path("prompts") / "av_system_prompt.txt"
-DEFAULT_FRAMES = 8         # frames to extract per video
+DEFAULT_FPS = 1.0          # frames per second to extract from video
+DEFAULT_MAX_FRAMES = 120   # hard cap so a long video doesn't generate thousands of frames
 DEFAULT_FRAME_MAX_SIDE = 768  # max dimension (px) for extracted frames
 DEFAULT_FRAME_JPEG_QUALITY = 80
 DEFAULT_WHISPER_MODEL = "base"
@@ -88,12 +89,15 @@ def probe_duration(file_path: Path) -> Optional[float]:
 def extract_frames_jpeg(
     file_path: Path,
     *,
-    num_frames: int,
+    fps: float,
+    max_frames: int,
     max_side: int,
     jpeg_quality: int,
 ) -> List[bytes]:
-    """Extract up to num_frames evenly-spaced JPEG frames from a video file.
+    """Extract JPEG frames from a video file at the requested frames-per-second rate.
 
+    The number of frames extracted is: max(1, min(max_frames, int(duration * fps))).
+    When duration is unknown, falls back to a single first-frame extraction.
     Uses per-frame seek (-ss) for reliability across all video lengths.
     Returns a list of raw JPEG bytes. Returns empty list if extraction fails.
     """
@@ -111,6 +115,8 @@ def extract_frames_jpeg(
     frame_bytes: List[bytes] = []
 
     if duration is not None and duration > 0:
+        # Derive frame count from fps, clamped to [1, max_frames]
+        num_frames = max(1, min(max_frames, int(duration * fps)))
         # Sample at evenly-spaced timestamps across the video
         # Add a small offset so we don't always land on the very first frame
         step = duration / (num_frames + 1)
@@ -402,7 +408,8 @@ def process_av_file(
     x_title: Optional[str],
     openrouter_provider: Optional[str],
     request_semaphore: Optional[threading.Semaphore],
-    num_frames: int,
+    fps: float,
+    max_frames: int,
     frame_max_side: int,
     frame_jpeg_quality: int,
     whisper_model: str,
@@ -423,7 +430,8 @@ def process_av_file(
         if not is_audio_only:
             frame_bytes_list = extract_frames_jpeg(
                 file_path,
-                num_frames=num_frames,
+                fps=fps,
+                max_frames=max_frames,
                 max_side=frame_max_side,
                 jpeg_quality=frame_jpeg_quality,
             )
@@ -476,6 +484,7 @@ def process_av_file(
         "file_size_bytes": file_path.stat().st_size,
         "duration_seconds": duration_seconds,
         "frames_extracted": len(frame_data_urls),
+        "fps_requested": fps,
         "has_transcript": transcript is not None,
         "transcript_chars": len(transcript) if transcript else 0,
         "prep_seconds": round(prep_seconds, 4),
@@ -684,8 +693,12 @@ def parse_args() -> argparse.Namespace:
         help="Path to system prompt text file.",
     )
     parser.add_argument(
-        "--num-frames", type=int, default=DEFAULT_FRAMES,
-        help="Number of frames to extract per video file.",
+        "--fps", type=float, default=DEFAULT_FPS,
+        help="Frames per second to extract from video files (default: 1.0).",
+    )
+    parser.add_argument(
+        "--max-frames", type=int, default=DEFAULT_MAX_FRAMES,
+        help="Hard cap on total frames extracted per video regardless of fps (default: 120).",
     )
     parser.add_argument(
         "--frame-max-side", type=int, default=DEFAULT_FRAME_MAX_SIDE,
@@ -856,7 +869,7 @@ def main() -> int:
 
     print(f"[config] endpoint={args.endpoint}")
     print(f"[config] model={args.model}")
-    print(f"[config] num_frames={args.num_frames} | frame_max_side={args.frame_max_side}")
+    print(f"[config] fps={args.fps} | max_frames={args.max_frames} | frame_max_side={args.frame_max_side}")
     print(f"[config] transcription={'enabled (' + args.whisper_model + ')' if enable_transcription else 'disabled'}")
     print(f"[config] max_parallel={args.max_parallel} | output={output_jsonl}")
     print()
@@ -882,7 +895,8 @@ def main() -> int:
                 x_title=x_title,
                 openrouter_provider=openrouter_provider,
                 request_semaphore=semaphore,
-                num_frames=args.num_frames,
+                fps=args.fps,
+                max_frames=args.max_frames,
                 frame_max_side=args.frame_max_side,
                 frame_jpeg_quality=args.frame_jpeg_quality,
                 whisper_model=args.whisper_model,
