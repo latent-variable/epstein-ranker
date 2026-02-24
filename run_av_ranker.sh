@@ -52,7 +52,7 @@ Pass-through options (forwarded to av_ranker.py):
   --dry-run              Print what would be processed
   --file-types TYPE      all | video | audio (default: all)
   --max-parallel N       Concurrent workers (default: 4)
-  --fps N                Frames per second to extract (default: 1.0)
+  --seconds-per-frame N  Seconds between extracted frames (default: 2.0)
   --max-frames N         Hard cap on total frames per video (default: 120)
   --grid-cols N          Grid compositing columns (default: 2)
   --grid-rows N          Grid compositing rows (default: 2)
@@ -104,14 +104,14 @@ MODEL="${AV_MODEL:-qwen/qwen3-vl-30b-a3b-thinking}"
 PROVIDER="${AV_PROVIDER:-}"
 ENDPOINT="${AV_ENDPOINT:-${OPENROUTER_ENDPOINT:-https://openrouter.ai/api/v1}}"
 PARALLEL="${AV_PARALLEL:-4}"
-FPS="${AV_FPS:-1.0}"
+SECONDS_PER_FRAME="${AV_SECONDS_PER_FRAME:-2.0}"
 MAX_FRAMES="${AV_MAX_FRAMES:-120}"
 GRID_COLS="${AV_GRID_COLS:-2}"
 GRID_ROWS="${AV_GRID_ROWS:-2}"
 WHISPER="${AV_WHISPER_MODEL:-small}"
 
 echo "[config] volume=$VOLUME | model=$MODEL | provider=${PROVIDER:-auto}"
-echo "[config] parallel=$PARALLEL | fps=$FPS | max_frames=$MAX_FRAMES | grid=${GRID_COLS}x${GRID_ROWS} | whisper=$WHISPER"
+echo "[config] parallel=$PARALLEL | seconds_per_frame=$SECONDS_PER_FRAME | max_frames=$MAX_FRAMES | grid=${GRID_COLS}x${GRID_ROWS} | whisper=$WHISPER"
 echo "[config] endpoint=$ENDPOINT"
 echo ""
 
@@ -121,7 +121,7 @@ CMD=(
   --model "$MODEL"
   --endpoint "$ENDPOINT"
   --max-parallel "$PARALLEL"
-  --fps "$FPS"
+  --seconds-per-frame "$SECONDS_PER_FRAME"
   --max-frames "$MAX_FRAMES"
   --grid-cols "$GRID_COLS"
   --grid-rows "$GRID_ROWS"
@@ -139,7 +139,7 @@ if [[ -n "${OPENROUTER_TITLE:-}" ]]; then
   CMD+=(--x-title "$OPENROUTER_TITLE")
 fi
 
-CMD+=("${EXTRA_ARGS[@]}")
+CMD+=("${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}")
 
 printf '[cmd] '
 printf '%q ' "${CMD[@]}"

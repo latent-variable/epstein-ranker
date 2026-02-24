@@ -51,16 +51,17 @@ AV_ALL_SUFFIXES = AV_VIDEO_SUFFIXES | AV_AUDIO_SUFFIXES
 DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "qwen/qwen3-vl-30b-a3b-thinking"
 DEFAULT_SYSTEM_PROMPT_PATH = Path("prompts") / "av_system_prompt.txt"
-DEFAULT_FPS = 1.0          # frames per second to extract from video
+DEFAULT_SECONDS_PER_FRAME = 2.0          # extract 1 frame every X seconds
 DEFAULT_MAX_FRAMES = 120   # hard cap so a long video doesn't generate thousands of frames
-DEFAULT_FRAME_MAX_SIDE = 768  # max dimension (px) for extracted frames
+DEFAULT_FRAME_MAX_SIDE = 1024  # max dimension (px) for extracted frames
 DEFAULT_FRAME_JPEG_QUALITY = 80
 DEFAULT_GRID_COLS = 2      # pack this many frames horizontally per grid image
 DEFAULT_GRID_ROWS = 2      # pack this many frames vertically per grid image
 DEFAULT_WHISPER_MODEL = "small"
 DEFAULT_MAX_PARALLEL = 4
 DEFAULT_TIMEOUT = 300.0    # seconds
-DEFAULT_MAX_OUTPUT_TOKENS = 1000
+DEFAULT_CHUNK_SIZE = 1000  # rows per output chunk file
+DEFAULT_MAX_OUTPUT_TOKENS = 4096
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_RETRY_BACKOFF = 2.0
 
@@ -92,14 +93,14 @@ def probe_duration(file_path: Path) -> Optional[float]:
 def extract_frames_jpeg(
     file_path: Path,
     *,
-    fps: float,
+    seconds_per_frame: float,
     max_frames: int,
     max_side: int,
     jpeg_quality: int,
 ) -> List[bytes]:
-    """Extract JPEG frames from a video file at the requested frames-per-second rate.
+    """Extract JPEG frames from a video file at the requested seconds-per-frame rate.
 
-    The number of frames extracted is: max(1, min(max_frames, int(duration * fps))).
+    The number of frames extracted is: max(1, min(max_frames, int(duration / seconds_per_frame))).
     When duration is unknown, falls back to a single first-frame extraction.
     Uses per-frame seek (-ss) for reliability across all video lengths.
     Returns a list of raw JPEG bytes. Returns empty list if extraction fails.
@@ -118,8 +119,8 @@ def extract_frames_jpeg(
     frame_bytes: List[bytes] = []
 
     if duration is not None and duration > 0:
-        # Derive frame count from fps, clamped to [1, max_frames]
-        num_frames = max(1, min(max_frames, int(duration * fps)))
+        # Derive frame count from seconds_per_frame, clamped to [1, max_frames]
+        num_frames = max(1, min(max_frames, int(duration / max(0.1, seconds_per_frame))))
         # Sample at evenly-spaced timestamps across the video
         # Add a small offset so we don't always land on the very first frame
         step = duration / (num_frames + 1)
@@ -135,6 +136,7 @@ def extract_frames_jpeg(
             out_path = os.path.join(tmpdir, f"frame_{i:03d}.jpg")
             cmd = [
                 "ffmpeg", "-y",
+                "-loglevel", "error",
                 "-ss", f"{ts:.4f}",
                 "-i", str(file_path),
                 "-vf", scale_filter,
@@ -158,6 +160,7 @@ def extract_frames_jpeg(
             fallback_path = os.path.join(tmpdir, "fallback.jpg")
             cmd_fb = [
                 "ffmpeg", "-y",
+                "-loglevel", "error",
                 "-i", str(file_path),
                 "-vf", scale_filter,
                 "-frames:v", "1",
@@ -242,6 +245,7 @@ def extract_audio_track(file_path: Path, *, tmpdir: str) -> Optional[Path]:
     out_path = Path(tmpdir) / "audio.wav"
     cmd = [
         "ffmpeg", "-y",
+        "-loglevel", "error",
         "-i", str(file_path),
         "-vn",                    # no video
         "-acodec", "pcm_s16le",   # 16-bit PCM
@@ -253,8 +257,10 @@ def extract_audio_track(file_path: Path, *, tmpdir: str) -> Optional[Path]:
         result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
         if out_path.exists() and out_path.stat().st_size > 1000:
             return out_path
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
+        else:
+            print(f"  [warn] FFmpeg audio extraction failed or no audio track found for {file_path.name}", file=sys.stderr)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        print(f"  [warn] FFmpeg error on {file_path.name}: {e}", file=sys.stderr)
     return None
 
 
@@ -263,6 +269,7 @@ def convert_audio_to_wav(file_path: Path, *, tmpdir: str) -> Optional[Path]:
     out_path = Path(tmpdir) / "audio.wav"
     cmd = [
         "ffmpeg", "-y",
+        "-loglevel", "error",
         "-i", str(file_path),
         "-acodec", "pcm_s16le",
         "-ar", "16000",
@@ -273,8 +280,10 @@ def convert_audio_to_wav(file_path: Path, *, tmpdir: str) -> Optional[Path]:
         subprocess.run(cmd, capture_output=True, timeout=120, check=False)
         if out_path.exists() and out_path.stat().st_size > 1000:
             return out_path
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
+        else:
+            print(f"  [warn] FFmpeg audio conversion failed for {file_path.name}", file=sys.stderr)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        print(f"  [warn] FFmpeg error on {file_path.name}: {e}", file=sys.stderr)
     return None
 
 
@@ -301,16 +310,32 @@ def transcribe_audio(
     with _whisper_lock:
         if whisper_model not in _whisper_model_cache:
             try:
-                _whisper_model_cache[whisper_model] = whisper.load_model(whisper_model)
-            except Exception:
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=FutureWarning, message=".*weights_only.*")
+                    _whisper_model_cache[whisper_model] = whisper.load_model(whisper_model)
+            except Exception as e:
+                print(f"  [error] Failed to load Whisper model {whisper_model}: {e}", file=sys.stderr)
                 return None
         model = _whisper_model_cache[whisper_model]
 
     try:
-        result = model.transcribe(str(wav_path), fp16=False, verbose=False)
+        # Suppress whisper progress bars and ffmpeg spam
+        import os, sys
+        old_stdout = sys.stdout
+        with open(os.devnull, "w") as devnull:
+            sys.stdout = devnull
+            try:
+                # Must hold lock during inference: PyTorch Linear is not thread-safe by default for Whisper
+                with _whisper_lock:
+                    result = model.transcribe(str(wav_path), fp16=False, verbose=None)
+            finally:
+                sys.stdout = old_stdout
+
         text = result.get("text", "").strip()
         return text if text else None
-    except Exception:
+    except Exception as e:
+        print(f"  [error] Whisper transcription failed for {wav_path}: {e}", file=sys.stderr)
         return None
 
 
@@ -362,6 +387,58 @@ def build_av_user_message(
         })
 
     return parts
+
+
+def _repair_truncated_json(text: str) -> str:
+    """Best-effort repair of JSON truncated by token limits.
+
+    Finds the outermost ``{...`` block and attempts to close any
+    unterminated strings, arrays, and objects so ``json.loads`` can
+    parse it.
+    """
+    start = text.find("{")
+    if start == -1:
+        return text
+    fragment = text[start:]
+
+    # Close any unterminated string
+    in_string = False
+    escaped = False
+    for ch in fragment:
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+    if in_string:
+        fragment += '"'
+
+    # Close unclosed brackets/braces
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    for ch in fragment:
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]" and stack:
+            stack.pop()
+
+    fragment += "".join(reversed(stack))
+    return fragment
 
 
 def call_av_model(
@@ -433,7 +510,23 @@ def call_av_model(
             data = _do_request()
             request_seconds = time.monotonic() - t0
             content = extract_openai_content(data)
-            parsed = ensure_json_dict(content)
+
+            # Strip <think>...</think> blocks that thinking models produce
+            import re as _re
+            cleaned = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL).strip()
+            if not cleaned and content:
+                # Model only returned thinking content, no JSON
+                print(f"  [debug] Model returned only thinking content ({len(content)} chars), no JSON body")
+            text_to_parse = cleaned if cleaned else content
+
+            # Attempt to repair truncated JSON from token-limited responses
+            try:
+                parsed = ensure_json_dict(text_to_parse)
+            except (json.JSONDecodeError, ValueError):
+                repaired = _repair_truncated_json(text_to_parse)
+                parsed = ensure_json_dict(repaired)
+                parsed["_json_repaired"] = True
+
             parsed["_request_meta"] = {
                 "attempt": attempt,
                 "request_seconds": round(request_seconds, 4),
@@ -480,7 +573,7 @@ def process_av_file(
     x_title: Optional[str],
     openrouter_provider: Optional[str],
     request_semaphore: Optional[threading.Semaphore],
-    fps: float,
+    seconds_per_frame: float,
     max_frames: int,
     frame_max_side: int,
     frame_jpeg_quality: int,
@@ -507,7 +600,7 @@ def process_av_file(
         if not is_audio_only:
             frame_bytes_list = extract_frames_jpeg(
                 file_path,
-                fps=fps,
+                seconds_per_frame=seconds_per_frame,
                 max_frames=max_frames,
                 max_side=frame_max_side,
                 jpeg_quality=frame_jpeg_quality,
@@ -537,6 +630,7 @@ def process_av_file(
                     )
 
         # --- Extract + transcribe audio ---
+        whisper_seconds = 0.0
         if enable_transcription:
             if is_audio_only:
                 wav_path = convert_audio_to_wav(file_path, tmpdir=tmpdir)
@@ -544,7 +638,9 @@ def process_av_file(
                 wav_path = extract_audio_track(file_path, tmpdir=tmpdir)
 
             if wav_path:
+                t0_w = time.monotonic()
                 transcript = transcribe_audio(wav_path, whisper_model=whisper_model)
+                whisper_seconds = time.monotonic() - t0_w
 
     prep_seconds = time.monotonic() - prep_start
     total_raw_frames = total_raw_frames if not is_audio_only else 0
@@ -586,9 +682,10 @@ def process_av_file(
         "frames_extracted": total_raw_frames,
         "images_sent": len(frame_data_urls),
         "grid_layout": f"{grid_cols}x{grid_rows}" if (enable_grid and frames_per_grid > 1) else "none",
-        "fps_requested": fps,
+        "seconds_per_frame_requested": seconds_per_frame,
         "has_transcript": transcript is not None,
         "transcript_chars": len(transcript) if transcript else 0,
+        "whisper_seconds": round(whisper_seconds, 4),
         "prep_seconds": round(prep_seconds, 4),
     }
     if result["_request_meta"]:
@@ -703,6 +800,133 @@ def load_only_source_ids(path: Path) -> Optional[Set[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Chunked output writer
+# ---------------------------------------------------------------------------
+
+
+class ChunkedWriter:
+    """Writes JSONL rows into numbered chunk files and maintains a manifest."""
+
+    def __init__(self, out_dir: Path, chunk_size: int, prefix: str = "av_ranked") -> None:
+        self._out_dir = out_dir
+        self._chunk_size = chunk_size
+        self._prefix = prefix
+        self._rows_written = 0
+        self._current_chunk_rows = 0
+        self._current_handle: Optional[Any] = None
+        self._current_path: Optional[Path] = None
+        self._chunk_paths: list[Path] = []
+        self._lock = threading.Lock()
+        # Count rows from existing chunk files to support resume
+        self._scan_existing()
+
+    def _scan_existing(self) -> None:
+        import re
+        pattern = re.compile(rf"{re.escape(self._prefix)}_(\d+)_(\d+)\.jsonl$")
+        total = 0
+        for f in sorted(self._out_dir.glob(f"{self._prefix}_*.jsonl")):
+            if pattern.match(f.name):
+                self._chunk_paths.append(f)
+                with f.open("r", encoding="utf-8") as fh:
+                    count = sum(1 for line in fh if line.strip())
+                total += count
+        self._rows_written = total
+        # Figure out where we are in the current chunk
+        if total > 0 and total % self._chunk_size != 0:
+            self._current_chunk_rows = total % self._chunk_size
+            # Reopen the last chunk for appending
+            if self._chunk_paths:
+                self._current_path = self._chunk_paths[-1]
+                self._current_handle = self._current_path.open("a", encoding="utf-8")
+        else:
+            self._current_chunk_rows = 0
+
+    def _chunk_path_for_range(self, start: int, end: int) -> Path:
+        return self._out_dir / f"{self._prefix}_{start:05d}_{end:05d}.jsonl"
+
+    def _rotate_if_needed(self) -> None:
+        if self._current_handle is not None and self._current_chunk_rows < self._chunk_size:
+            return
+        if self._current_handle is not None:
+            self._current_handle.close()
+            self._current_handle = None
+        start = self._rows_written + 1
+        end = self._rows_written + self._chunk_size
+        self._current_path = self._chunk_path_for_range(start, end)
+        self._current_handle = self._current_path.open("a", encoding="utf-8")
+        if self._current_path not in self._chunk_paths:
+            self._chunk_paths.append(self._current_path)
+        self._current_chunk_rows = 0
+
+    def write_row(self, row_json: str) -> None:
+        with self._lock:
+            self._rotate_if_needed()
+            assert self._current_handle is not None
+            self._current_handle.write(row_json + "\n")
+            self._current_handle.flush()
+            self._rows_written += 1
+            self._current_chunk_rows += 1
+
+    def close(self) -> None:
+        if self._current_handle is not None:
+            self._current_handle.close()
+            self._current_handle = None
+
+    def write_manifest(self) -> Path:
+        """Write a chunks.json manifest for this volume."""
+        import re
+        pattern = re.compile(rf"{re.escape(self._prefix)}_(\d+)_(\d+)\.jsonl$")
+        chunks = []
+        total_rows = 0
+        for fp in sorted(self._chunk_paths):
+            m = pattern.match(fp.name)
+            if not m:
+                continue
+            row_count = 0
+            if fp.exists():
+                with fp.open("r", encoding="utf-8") as fh:
+                    row_count = sum(1 for line in fh if line.strip())
+            chunks.append({
+                "start_row": int(m.group(1)),
+                "end_row": int(m.group(2)),
+                "json": str(fp),
+                "row_count": row_count,
+            })
+            total_rows += row_count
+        manifest = {
+            "metadata": {
+                "rows_processed": total_rows,
+                "last_updated": time.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            "chunks": chunks,
+        }
+        manifest_path = self._out_dir / "chunks.json"
+        with manifest_path.open("w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+        return manifest_path
+
+    def all_source_ids(self) -> Set[str]:
+        """Read all source_id values from existing chunk files for resume."""
+        ids: Set[str] = set()
+        for fp in self._chunk_paths:
+            if not fp.exists():
+                continue
+            with fp.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        sid = obj.get("source_id", "")
+                        if sid:
+                            ids.add(str(sid).upper())
+                    except json.JSONDecodeError:
+                        pass
+        return ids
+
+
+# ---------------------------------------------------------------------------
 # Progress + stats
 # ---------------------------------------------------------------------------
 
@@ -795,12 +1019,12 @@ def parse_args() -> argparse.Namespace:
         help="Path to system prompt text file.",
     )
     parser.add_argument(
-        "--fps", type=float, default=DEFAULT_FPS,
-        help="Frames per second to extract from video files (default: 1.0).",
+        "--seconds-per-frame", type=float, default=DEFAULT_SECONDS_PER_FRAME,
+        help="Extract one frame every N seconds (default: 1.0). Use e.g. 2.0 to get half the frames.",
     )
     parser.add_argument(
         "--max-frames", type=int, default=DEFAULT_MAX_FRAMES,
-        help="Hard cap on total frames extracted per video regardless of fps (default: 120).",
+        help="Hard cap on total frames extracted per video regardless of seconds-per-frame (default: 120).",
     )
     parser.add_argument(
         "--frame-max-side", type=int, default=DEFAULT_FRAME_MAX_SIDE,
@@ -870,6 +1094,10 @@ def parse_args() -> argparse.Namespace:
         "--no-grid", action="store_true",
         help="Disable frame grid compositing (send each frame individually).",
     )
+    parser.add_argument(
+        "--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE,
+        help=f"Rows per output chunk file (default: {DEFAULT_CHUNK_SIZE}).",
+    )
     return parser.parse_args()
 
 
@@ -932,31 +1160,20 @@ def main() -> int:
     # --- Setup output paths ---
     out_vol_dir = args.output_dir / vol_tag
     out_vol_dir.mkdir(parents=True, exist_ok=True)
-    output_jsonl = out_vol_dir / f"av_ranked_{vol_tag}.jsonl"
 
     checkpoint_path = args.checkpoint or out_vol_dir / ".av_checkpoint"
 
-    # --- Load checkpoint ---
+    # --- Initialize chunked writer ---
+    writer = ChunkedWriter(out_vol_dir, chunk_size=args.chunk_size)
+
+    # --- Load checkpoint + chunk source IDs for resume ---
     done_ids: Set[str] = set()
     if args.resume:
         done_ids = load_checkpoint(checkpoint_path)
+        # Also include IDs already in chunk files
+        done_ids |= writer.all_source_ids()
         if done_ids:
             print(f"[resume] Skipping {len(done_ids)} already-processed file(s).")
-
-    # Also skip IDs already in the output JSONL
-    if output_jsonl.exists():
-        with output_jsonl.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                    sid = obj.get("source_id", "")
-                    if sid:
-                        done_ids.add(str(sid).upper())
-                except json.JSONDecodeError:
-                    pass
 
     # --- Filter already-processed ---
     pending = [(sid, fp) for sid, fp in av_files if sid not in done_ids]
@@ -985,10 +1202,10 @@ def main() -> int:
 
     print(f"[config] endpoint={args.endpoint}")
     print(f"[config] model={args.model}")
-    print(f"[config] fps={args.fps} | max_frames={args.max_frames} | frame_max_side={args.frame_max_side}")
+    print(f"[config] seconds_per_frame={args.seconds_per_frame} | max_frames={args.max_frames} | frame_max_side={args.frame_max_side}")
     grid_str = f"{args.grid_cols}x{args.grid_rows}" if enable_grid else "disabled"
     print(f"[config] grid={grid_str} | transcription={'enabled (' + args.whisper_model + ')' if enable_transcription else 'disabled'}")
-    print(f"[config] max_parallel={args.max_parallel} | output={output_jsonl}")
+    print(f"[config] max_parallel={args.max_parallel} | chunk_size={args.chunk_size} | output_dir={out_vol_dir}")
     print()
 
     semaphore = threading.Semaphore(args.max_parallel)
@@ -1012,7 +1229,7 @@ def main() -> int:
                 x_title=x_title,
                 openrouter_provider=openrouter_provider,
                 request_semaphore=semaphore,
-                fps=args.fps,
+                seconds_per_frame=args.seconds_per_frame,
                 max_frames=args.max_frames,
                 frame_max_side=args.frame_max_side,
                 frame_jpeg_quality=args.frame_jpeg_quality,
@@ -1026,19 +1243,27 @@ def main() -> int:
             row_json = json.dumps(row, ensure_ascii=False)
 
             with output_lock:
-                with output_jsonl.open("a", encoding="utf-8") as out:
-                    out.write(row_json + "\n")
+                writer.write_row(row_json)
                 append_checkpoint(checkpoint_path, sid)
 
             req_secs = result.get("_request_meta", {}).get("request_seconds", 0.0) or 0.0
             prep_secs = result.get("_av_meta", {}).get("prep_seconds", 0.0) or 0.0
             stats.record_success(req_secs, prep_secs)
             score = result.get("importance_score", "?")
-            frames = result.get("_av_meta", {}).get("frames_extracted", 0)
+            
+            # Formatted log with exactly what was extracted
+            frames_raw = result.get("_av_meta", {}).get("frames_extracted", 0)
+            frames_out = result.get("_av_meta", {}).get("images_sent", 0)
+            tx_len = result.get("_av_meta", {}).get("transcript_chars", 0)
             has_tx = result.get("_av_meta", {}).get("has_transcript", False)
+            whisper_sec = result.get("_av_meta", {}).get("whisper_seconds", 0.0)
+            
+            tx_str = f"tx={tx_len}c ({whisper_sec:.1f}s)" if has_tx else "tx=none"
+            frames_str = f"frames={frames_raw}/{frames_out}imgs" if frames_out else "frames=0/0imgs"
             elapsed = time.monotonic() - t0
+            
             print(
-                f"  [ok] {sid}  score={score}  frames={frames}  tx={'y' if has_tx else 'n'}  {elapsed:.1f}s"
+                f"  [ok] {sid:<12} score={score:<2} | {frames_str:<21} | {tx_str:<20} | total={elapsed:.1f}s"
             )
         except Exception as exc:
             stats.record_failure()
@@ -1054,9 +1279,12 @@ def main() -> int:
             except Exception as exc:
                 print(f"[executor] Unhandled exception: {exc}", file=sys.stderr)
 
+    writer.close()
+    manifest_path = writer.write_manifest()
+
     print()
     print(f"[done] {stats.summary()}")
-    print(f"[done] Output: {output_jsonl}")
+    print(f"[done] Output: {out_vol_dir} ({writer._rows_written} total rows, manifest: {manifest_path})")
     return 0
 
 
