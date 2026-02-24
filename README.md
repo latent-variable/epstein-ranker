@@ -4,6 +4,16 @@ LLM-powered tooling for triaging Epstein-related document corpora. Processes PDF
 
 **Default model:** [`qwen/qwen3-vl-30b-a3b-thinking`](https://openrouter.ai/qwen/qwen3-vl-30b-a3b-thinking) via OpenRouter (free, hosted by Alibaba). No API costs, no local GPU required.
 
+## Screenshots
+
+| Table View | Insights & Charts |
+| ---------- | ----------------- |
+| ![Table view](imgs/table.png) | ![Insights + charts](imgs/graphs.png) |
+
+| Methodology Explainer |
+| --------------------- |
+| ![Methodology explainer](imgs/info.png) |
+
 ---
 
 ## Quick Start
