@@ -18,7 +18,7 @@ OPENROUTER_MODEL="${OPENROUTER_MODEL:-qwen/qwen3-vl-30b-a3b-thinking}"
 OPENROUTER_PROVIDER="${OPENROUTER_PROVIDER:-alibaba}"
 OPENROUTER_ENDPOINT="${OPENROUTER_ENDPOINT:-https://openrouter.ai/api/v1}"
 LOCAL_ENDPOINT="${LOCAL_ENDPOINT:-http://localhost:5555/v1}"
-LOCAL_MODEL="${LOCAL_MODEL:-qwen/qwen3-vl-30b}"
+LOCAL_MODEL="${LOCAL_MODEL:-qwen/qwen3-vl-30b-a3b-thinking}"
 LOCAL_API_FORMAT="${LOCAL_API_FORMAT:-openai}"
 CLOUD_PARALLEL_SCHEDULING="${CLOUD_PARALLEL_SCHEDULING:-window}"
 LOCAL_PARALLEL_SCHEDULING="${LOCAL_PARALLEL_SCHEDULING:-batch}"
@@ -42,7 +42,7 @@ Options:
   --openrouter-model ID      Cloud model (default: qwen/qwen3-vl-30b-a3b-thinking)
   --openrouter-provider ID   OpenRouter provider (default: alibaba)
   --local-endpoint URL       Local endpoint (default: http://localhost:5555/v1)
-  --local-model ID           Local model (default: qwen/qwen3-vl-30b)
+  --local-model ID           Local model (default: qwen/qwen3-vl-30b-a3b-thinking)
   --local-api-format FMT     Local API format: auto | openai | chat (default: openai)
   --inline-local-fallback    Enable immediate cloud->local fallback (default)
   --no-inline-local-fallback Disable immediate cloud->local fallback

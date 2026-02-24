@@ -12,6 +12,7 @@ import argparse
 import base64
 import concurrent.futures
 import io
+import math
 import json
 import os
 import re
@@ -48,13 +49,15 @@ AV_AUDIO_SUFFIXES = {".m4a", ".wav", ".opus", ".mp3", ".amr", ".aac", ".ogg", ".
 AV_ALL_SUFFIXES = AV_VIDEO_SUFFIXES | AV_AUDIO_SUFFIXES
 
 DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "nvidia/nemotron-nano-12b-v2-vl:free"
+DEFAULT_MODEL = "qwen/qwen3-vl-30b-a3b-thinking"
 DEFAULT_SYSTEM_PROMPT_PATH = Path("prompts") / "av_system_prompt.txt"
 DEFAULT_FPS = 1.0          # frames per second to extract from video
 DEFAULT_MAX_FRAMES = 120   # hard cap so a long video doesn't generate thousands of frames
 DEFAULT_FRAME_MAX_SIDE = 768  # max dimension (px) for extracted frames
 DEFAULT_FRAME_JPEG_QUALITY = 80
-DEFAULT_WHISPER_MODEL = "base"
+DEFAULT_GRID_COLS = 2      # pack this many frames horizontally per grid image
+DEFAULT_GRID_ROWS = 2      # pack this many frames vertically per grid image
+DEFAULT_WHISPER_MODEL = "small"
 DEFAULT_MAX_PARALLEL = 4
 DEFAULT_TIMEOUT = 300.0    # seconds
 DEFAULT_MAX_OUTPUT_TOKENS = 1000
@@ -172,6 +175,68 @@ def extract_frames_jpeg(
     return frame_bytes
 
 
+# ---------------------------------------------------------------------------
+# Frame grid compositing
+# ---------------------------------------------------------------------------
+
+def compose_frame_grid(
+    frame_bytes_list: List[bytes],
+    *,
+    grid_cols: int = DEFAULT_GRID_COLS,
+    grid_rows: int = DEFAULT_GRID_ROWS,
+    cell_size: int = 384,
+    jpeg_quality: int = 80,
+    gap: int = 4,
+) -> List[bytes]:
+    """Pack frames into grid composite images (e.g. 2×2).
+
+    Each frame is resized to fit within *cell_size* × *cell_size*, then placed
+    in a grid with *gap* pixel white separators.  Returns a list of JPEG byte
+    arrays — one per grid image.  The last grid may have fewer cells (empty
+    cells are left black).
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    frames_per_grid = grid_cols * grid_rows
+    if frames_per_grid < 2:
+        # No point compositing 1×1 grids — return originals
+        return frame_bytes_list
+
+    grid_w = grid_cols * cell_size + (grid_cols - 1) * gap
+    grid_h = grid_rows * cell_size + (grid_rows - 1) * gap
+
+    grids: List[bytes] = []
+    total = len(frame_bytes_list)
+
+    for batch_start in range(0, total, frames_per_grid):
+        batch = frame_bytes_list[batch_start : batch_start + frames_per_grid]
+        canvas = Image.new("RGB", (grid_w, grid_h), color=(0, 0, 0))
+        draw = ImageDraw.Draw(canvas)
+
+        for idx, fb in enumerate(batch):
+            row, col = divmod(idx, grid_cols)
+            try:
+                img = Image.open(io.BytesIO(fb))
+                img.thumbnail((cell_size, cell_size), Image.LANCZOS)
+                x = col * (cell_size + gap)
+                y = row * (cell_size + gap)
+                # Center within cell
+                x_offset = (cell_size - img.width) // 2
+                y_offset = (cell_size - img.height) // 2
+                canvas.paste(img, (x + x_offset, y + y_offset))
+                # Small frame number label
+                frame_num = batch_start + idx + 1
+                draw.text((x + 4, y + 4), f"#{frame_num}", fill=(255, 255, 255))
+            except Exception:
+                continue
+
+        buf = io.BytesIO()
+        canvas.save(buf, format="JPEG", quality=jpeg_quality)
+        grids.append(buf.getvalue())
+
+    return grids
+
+
 def extract_audio_track(file_path: Path, *, tmpdir: str) -> Optional[Path]:
     """Extract audio from a video file to a WAV file. Returns path or None."""
     out_path = Path(tmpdir) / "audio.wav"
@@ -260,6 +325,8 @@ def build_av_user_message(
     transcript: Optional[str],
     duration_seconds: Optional[float],
     is_audio_only: bool,
+    total_frames: int = 0,
+    frames_per_grid: int = 0,
 ) -> Any:
     """Build the user message content (list of text + image blocks)."""
     parts: List[Dict[str, Any]] = []
@@ -273,7 +340,12 @@ def build_av_user_message(
         f"Filename: {filename}",
         f"Duration: {duration_str}",
     ]
-    if frame_data_urls:
+    if frame_data_urls and frames_per_grid > 1:
+        intro_lines.append(
+            f"Frames provided: {len(frame_data_urls)} grid image(s) containing {total_frames} evenly-spaced frames "
+            f"({frames_per_grid} per grid, numbered in top-left corner). Examine each sub-frame for visual evidence."
+        )
+    elif frame_data_urls:
         intro_lines.append(f"Frames provided: {len(frame_data_urls)} evenly-spaced frames from the video.")
     if transcript:
         intro_lines.append(f"\nAudio transcript:\n---\n{transcript.strip()}\n---")
@@ -414,6 +486,9 @@ def process_av_file(
     frame_jpeg_quality: int,
     whisper_model: str,
     enable_transcription: bool,
+    grid_cols: int = DEFAULT_GRID_COLS,
+    grid_rows: int = DEFAULT_GRID_ROWS,
+    enable_grid: bool = True,
 ) -> Dict[str, Any]:
     """Process a single AV file: extract frames + transcript, then call the model."""
     suffix = file_path.suffix.lower()
@@ -423,6 +498,8 @@ def process_av_file(
     duration_seconds = probe_duration(file_path)
     frame_data_urls: List[str] = []
     transcript: Optional[str] = None
+    total_raw_frames = 0
+    frames_per_grid = 0
     prep_start = time.monotonic()
 
     with tempfile.TemporaryDirectory(prefix="av_ranker_proc_") as tmpdir:
@@ -435,10 +512,29 @@ def process_av_file(
                 max_side=frame_max_side,
                 jpeg_quality=frame_jpeg_quality,
             )
-            for fb in frame_bytes_list:
-                frame_data_urls.append(
-                    encode_image_bytes_to_data_url(fb, mime="image/jpeg")
+            total_raw_frames = len(frame_bytes_list)
+
+            # --- Composite into grids if enabled ---
+            frames_per_grid = grid_cols * grid_rows
+            if enable_grid and frames_per_grid > 1 and len(frame_bytes_list) > 1:
+                grid_cell = max(256, frame_max_side // grid_cols)
+                grid_bytes = compose_frame_grid(
+                    frame_bytes_list,
+                    grid_cols=grid_cols,
+                    grid_rows=grid_rows,
+                    cell_size=grid_cell,
+                    jpeg_quality=frame_jpeg_quality,
                 )
+                for gb in grid_bytes:
+                    frame_data_urls.append(
+                        encode_image_bytes_to_data_url(gb, mime="image/jpeg")
+                    )
+            else:
+                frames_per_grid = 0  # signal: no grid in use
+                for fb in frame_bytes_list:
+                    frame_data_urls.append(
+                        encode_image_bytes_to_data_url(fb, mime="image/jpeg")
+                    )
 
         # --- Extract + transcribe audio ---
         if enable_transcription:
@@ -451,6 +547,8 @@ def process_av_file(
                 transcript = transcribe_audio(wav_path, whisper_model=whisper_model)
 
     prep_seconds = time.monotonic() - prep_start
+    total_raw_frames = total_raw_frames if not is_audio_only else 0
+    frames_per_grid = frames_per_grid if not is_audio_only else 0
 
     user_content = build_av_user_message(
         filename,
@@ -458,6 +556,8 @@ def process_av_file(
         transcript=transcript,
         duration_seconds=duration_seconds,
         is_audio_only=is_audio_only,
+        total_frames=total_raw_frames,
+        frames_per_grid=frames_per_grid,
     )
 
     result = call_av_model(
@@ -483,7 +583,9 @@ def process_av_file(
         "file_type": "audio" if is_audio_only else "video",
         "file_size_bytes": file_path.stat().st_size,
         "duration_seconds": duration_seconds,
-        "frames_extracted": len(frame_data_urls),
+        "frames_extracted": total_raw_frames,
+        "images_sent": len(frame_data_urls),
+        "grid_layout": f"{grid_cols}x{grid_rows}" if (enable_grid and frames_per_grid > 1) else "none",
         "fps_requested": fps,
         "has_transcript": transcript is not None,
         "transcript_chars": len(transcript) if transcript else 0,
@@ -756,6 +858,18 @@ def parse_args() -> argparse.Namespace:
         "--file-types", choices=["all", "video", "audio"], default="all",
         help="Filter to process only video, only audio, or all AV files.",
     )
+    parser.add_argument(
+        "--grid-cols", type=int, default=DEFAULT_GRID_COLS,
+        help="Columns in frame grid compositing (default: 2).",
+    )
+    parser.add_argument(
+        "--grid-rows", type=int, default=DEFAULT_GRID_ROWS,
+        help="Rows in frame grid compositing (default: 2).",
+    )
+    parser.add_argument(
+        "--no-grid", action="store_true",
+        help="Disable frame grid compositing (send each frame individually).",
+    )
     return parser.parse_args()
 
 
@@ -867,10 +981,13 @@ def main() -> int:
 
     enable_transcription = not args.no_transcription
 
+    enable_grid = not args.no_grid
+
     print(f"[config] endpoint={args.endpoint}")
     print(f"[config] model={args.model}")
     print(f"[config] fps={args.fps} | max_frames={args.max_frames} | frame_max_side={args.frame_max_side}")
-    print(f"[config] transcription={'enabled (' + args.whisper_model + ')' if enable_transcription else 'disabled'}")
+    grid_str = f"{args.grid_cols}x{args.grid_rows}" if enable_grid else "disabled"
+    print(f"[config] grid={grid_str} | transcription={'enabled (' + args.whisper_model + ')' if enable_transcription else 'disabled'}")
     print(f"[config] max_parallel={args.max_parallel} | output={output_jsonl}")
     print()
 
@@ -901,6 +1018,9 @@ def main() -> int:
                 frame_jpeg_quality=args.frame_jpeg_quality,
                 whisper_model=args.whisper_model,
                 enable_transcription=enable_transcription,
+                grid_cols=args.grid_cols,
+                grid_rows=args.grid_rows,
+                enable_grid=enable_grid,
             )
             row = build_output_row(sid, fp, args.volume, result)
             row_json = json.dumps(row, ensure_ascii=False)

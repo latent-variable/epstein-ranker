@@ -3,7 +3,7 @@
 # Endpoint / model overrides
 endpoint = "http://localhost:5555/v1"
 api_format = "openai" # "auto", "openai", or "chat"
-model = "qwen/qwen3-vl-30b"
+model = "qwen/qwen3-vl-30b-a3b-thinking"
 api_key = "" # Optional API key (required for hosted providers like OpenRouter)
 http_referer = "" # Optional HTTP-Referer header (recommended by OpenRouter)
 x_title = "" # Optional X-Title header (recommended by OpenRouter)
@@ -88,7 +88,7 @@ checkpoint = "data/.epstein_checkpoint"
 # OpenRouter quick-start example:
 # endpoint = "https://openrouter.ai/api/v1"
 # api_format = "openai"
-# model = "qwen/qwen3-vl-30b-a3b-instruct"
+# model = "qwen/qwen3-vl-30b-a3b-thinking"
 # api_key = "sk-or-..."
 # http_referer = "https://your-app.example"
 # x_title = "Epstein File Ranker"

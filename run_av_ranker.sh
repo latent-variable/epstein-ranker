@@ -11,12 +11,14 @@
 #
 # Environment:
 #   OPENROUTER_API_KEY   — required if not in .env.openrouter
-#   OPENROUTER_MODEL     — override model (default: nvidia/nemotron-nano-12b-v2-vl:free)
+#   OPENROUTER_MODEL     — override model (default: qwen/qwen3-vl-30b-a3b-thinking)
 #   OPENROUTER_PROVIDER  — override provider routing hint (default: nvidia)
 #   AV_PARALLEL          — max concurrent requests (default: 4)
 #   AV_FPS               — frames per second to extract from video (default: 1.0)
 #   AV_MAX_FRAMES        — hard cap on frames per video (default: 120)
-#   AV_WHISPER_MODEL     — whisper model size (default: base)
+#   AV_GRID_COLS         — grid compositing columns (default: 2)
+#   AV_GRID_ROWS         — grid compositing rows (default: 2)
+#   AV_WHISPER_MODEL     — whisper model size (default: small)
 
 set -euo pipefail
 
@@ -52,7 +54,10 @@ Pass-through options (forwarded to av_ranker.py):
   --max-parallel N       Concurrent workers (default: 4)
   --fps N                Frames per second to extract (default: 1.0)
   --max-frames N         Hard cap on total frames per video (default: 120)
-  --whisper-model SIZE   tiny | base | small | medium | large (default: base)
+  --grid-cols N          Grid compositing columns (default: 2)
+  --grid-rows N          Grid compositing rows (default: 2)
+  --no-grid              Disable frame grid compositing
+  --whisper-model SIZE   tiny | base | small | medium | large (default: small)
   --model ID             Override model ID
   --endpoint URL         Override API endpoint
   --openrouter-provider  Override provider routing hint
@@ -93,18 +98,20 @@ if [[ ! "$VOLUME" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-MODEL="${AV_MODEL:-nvidia/nemotron-nano-12b-v2-vl:free}"
+MODEL="${AV_MODEL:-qwen/qwen3-vl-30b-a3b-thinking}"
 # Do NOT inherit OPENROUTER_PROVIDER here — that's set to 'alibaba' for the PDF pipeline.
-# For the AV pipeline (Nemotron), leave provider empty to let OpenRouter choose.
+# For the AV pipeline (Qwen3 VL), leave provider empty to let OpenRouter choose.
 PROVIDER="${AV_PROVIDER:-}"
 ENDPOINT="${AV_ENDPOINT:-${OPENROUTER_ENDPOINT:-https://openrouter.ai/api/v1}}"
 PARALLEL="${AV_PARALLEL:-4}"
 FPS="${AV_FPS:-1.0}"
 MAX_FRAMES="${AV_MAX_FRAMES:-120}"
-WHISPER="${AV_WHISPER_MODEL:-base}"
+GRID_COLS="${AV_GRID_COLS:-2}"
+GRID_ROWS="${AV_GRID_ROWS:-2}"
+WHISPER="${AV_WHISPER_MODEL:-small}"
 
 echo "[config] volume=$VOLUME | model=$MODEL | provider=${PROVIDER:-auto}"
-echo "[config] parallel=$PARALLEL | fps=$FPS | max_frames=$MAX_FRAMES | whisper=$WHISPER"
+echo "[config] parallel=$PARALLEL | fps=$FPS | max_frames=$MAX_FRAMES | grid=${GRID_COLS}x${GRID_ROWS} | whisper=$WHISPER"
 echo "[config] endpoint=$ENDPOINT"
 echo ""
 
@@ -116,6 +123,8 @@ CMD=(
   --max-parallel "$PARALLEL"
   --fps "$FPS"
   --max-frames "$MAX_FRAMES"
+  --grid-cols "$GRID_COLS"
+  --grid-rows "$GRID_ROWS"
   --whisper-model "$WHISPER"
   --resume
 )

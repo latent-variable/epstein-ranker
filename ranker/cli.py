@@ -201,7 +201,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="qwen/qwen3-vl-30b",
+        default="qwen/qwen3-vl-30b-a3b-thinking",
         help="Model identifier exposed by the server (check via --list-models).",
     )
     parser.add_argument(
@@ -376,7 +376,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--local-fallback-model",
-        default="qwen/qwen3-vl-30b",
+        default="qwen/qwen3-vl-30b-a3b-thinking",
         help="Model ID used for immediate local fallback requests.",
     )
     parser.add_argument(

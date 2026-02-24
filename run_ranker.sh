@@ -27,14 +27,14 @@ GIT_OUTPUT_ROOT="contrib/fta"
 TRACK_CHUNKS_IN_GIT=1
 
 LOCAL_DEFAULT_ENDPOINT="http://localhost:5555/v1"
-LOCAL_DEFAULT_MODEL="qwen/qwen3-vl-30b"
+LOCAL_DEFAULT_MODEL="qwen/qwen3-vl-30b-a3b-thinking"
 OPENROUTER_DEFAULT_ENDPOINT="https://openrouter.ai/api/v1"
+OPENROUTER_MODEL="qwen/qwen3-vl-30b-a3b-thinking"
 
-ENDPOINT="${ENDPOINT:-$LOCAL_DEFAULT_ENDPOINT}"
+ENDPOINT="${ENDPOINT:-$OPENROUTER_DEFAULT_ENDPOINT}"
 API_FORMAT="openai"
-MODEL="${MODEL:-$LOCAL_DEFAULT_MODEL}"
-PROVIDER="local"
-OPENROUTER_MODEL="qwen/qwen3-vl-30b-a3b-instruct"
+MODEL="${MODEL:-$OPENROUTER_MODEL}"
+PROVIDER="openrouter"
 OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
 OPENROUTER_REFERER="${OPENROUTER_REFERER:-}"
 OPENROUTER_TITLE="${OPENROUTER_TITLE:-Epstein File Ranker}"
@@ -114,14 +114,14 @@ Core options:
   --processing-mode MODE     auto | text | image (default: image)
 
 Model/runtime options:
-  --provider NAME            local | openrouter (default: local)
+  --provider NAME            local | openrouter (default: openrouter)
   --endpoint URL             Model endpoint base URL (default: http://localhost:5555/v1)
   --api-format FORMAT        auto | openai | chat (default: openai)
-  --model ID                 Model id (default: qwen/qwen3-vl-30b)
+  --model ID                 Model id (default: qwen/qwen3-vl-30b-a3b-thinking)
   --api-key KEY              API key for hosted providers
   --http-referer URL         HTTP-Referer header (OpenRouter recommendation)
   --x-title NAME             X-Title header (OpenRouter recommendation)
-  --openrouter-model ID      OpenRouter model id (default: qwen/qwen3-vl-30b-a3b-instruct)
+  --openrouter-model ID      OpenRouter model id (default: qwen/qwen3-vl-30b-a3b-thinking)
   --openrouter-env-file PATH OpenRouter env file (default: .env.openrouter)
   --openrouter-api-key KEY   OpenRouter key (or set OPENROUTER_API_KEY)
   --openrouter-referer URL   OpenRouter referer override (or OPENROUTER_REFERER)
