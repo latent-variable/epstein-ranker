@@ -1,14 +1,14 @@
 {
   "metadata": {
-    "rows_processed": 40,
-    "last_updated": "2026-02-23 21:51:20"
+    "rows_processed": 423,
+    "last_updated": "2026-02-23 22:41:25"
   },
   "chunks": [
     {
       "start_row": 1,
       "end_row": 1000,
       "json": "contrib/fta/VOL00008/av_ranked_00001_01000.jsonl",
-      "row_count": 40
+      "row_count": 423
     }
   ]
 }
