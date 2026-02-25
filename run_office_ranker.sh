@@ -132,7 +132,9 @@ if [[ -n "${OPENROUTER_TITLE:-}" ]]; then
   CMD+=(--x-title "$OPENROUTER_TITLE")
 fi
 
-CMD+=("${EXTRA_ARGS[@]}")
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+  CMD+=("${EXTRA_ARGS[@]}")
+fi
 
 printf '[cmd] '
 printf '%q ' "${CMD[@]}"
