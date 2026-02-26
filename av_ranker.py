@@ -61,7 +61,7 @@ DEFAULT_WHISPER_MODEL = "small"
 DEFAULT_MAX_PARALLEL = 4
 DEFAULT_TIMEOUT = 300.0    # seconds
 DEFAULT_CHUNK_SIZE = 1000  # rows per output chunk file
-DEFAULT_MAX_OUTPUT_TOKENS = 4096
+DEFAULT_MAX_OUTPUT_TOKENS = 0
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_RETRY_BACKOFF = 2.0
 
@@ -519,12 +519,13 @@ def call_av_model(
     payload: Dict[str, Any] = {
         "model": model,
         "temperature": 0.0,
-        "max_tokens": max_output_tokens,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
     }
+    if max_output_tokens > 0:
+        payload["max_tokens"] = max_output_tokens
     if openrouter_provider and "openrouter.ai" in base_url:
         payload["provider"] = {"order": [openrouter_provider], "allow_fallbacks": True}
 
@@ -1230,7 +1231,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--max-output-tokens", type=int, default=DEFAULT_MAX_OUTPUT_TOKENS,
-        help="Max completion tokens per request.",
+        help="Max completion tokens per request (default: 0, no cap).",
     )
     parser.add_argument(
         "--max-retries", type=int, default=DEFAULT_MAX_RETRIES,
@@ -1281,6 +1282,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.max_output_tokens < 0:
+        print("[error] --max-output-tokens must be >= 0", file=sys.stderr)
+        return 1
 
     # --- Resolve API key ---
     api_key = args.api_key or os.environ.get("OPENROUTER_API_KEY")

@@ -242,8 +242,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-output-tokens",
         type=int,
-        default=900,
-        help="Upper bound for model completion tokens per request (0 disables the cap).",
+        default=0,
+        help="Upper bound for model completion tokens per request (default: 0, no cap).",
     )
     parser.add_argument(
         "--prompt-file",

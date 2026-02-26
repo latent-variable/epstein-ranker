@@ -14,7 +14,7 @@ max_parallel_requests = 4
 parallel_scheduling = "batch"  # auto | window | batch. batch = submit N, wait N, submit next N.
 image_prefetch = 0  # Extra queued image tasks (used in window mode).
 temperature = 0.0  # Temperature for model responses (0.0 = deterministic, higher = more random)
-max_output_tokens = 900  # Cap completion length to prevent runaway generations
+max_output_tokens = 0  # 0 = no completion cap (recommended for long JSON outputs)
 reasoning_effort = "low"  # Optional: "low", "medium", or "high" (omit if model doesn't support it)
 sleep = 0.0
 timeout = 1200.0  # HTTP request timeout in seconds (10 minutes)

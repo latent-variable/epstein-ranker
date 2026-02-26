@@ -62,7 +62,7 @@ DEFAULT_JPEG_QUALITY = 85
 DEFAULT_IMAGE_MAX_SIDE = 1024
 DEFAULT_MAX_PARALLEL = 4
 DEFAULT_TIMEOUT = 300.0
-DEFAULT_MAX_OUTPUT_TOKENS = 1200
+DEFAULT_MAX_OUTPUT_TOKENS = 0
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_RETRY_BACKOFF = 2.0
 
@@ -577,7 +577,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--max-output-tokens", type=int, default=DEFAULT_MAX_OUTPUT_TOKENS,
-        help="Max completion tokens per request.",
+        help="Max completion tokens per request (default: 0, no cap).",
     )
     parser.add_argument(
         "--max-retries", type=int, default=DEFAULT_MAX_RETRIES,
@@ -617,6 +617,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.max_output_tokens < 0:
+        print("[error] --max-output-tokens must be >= 0", file=sys.stderr)
+        return 1
 
     # Resolve API credentials
     api_key = args.api_key or os.environ.get("OPENROUTER_API_KEY")
