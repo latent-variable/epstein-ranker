@@ -2335,8 +2335,8 @@ def main() -> None:
         sys.exit("--image-max-side must be >= 0")
     if args.workload_estimate_sample_size < 1:
         sys.exit("--workload-estimate-sample-size must be >= 1")
-    if args.max_output_tokens < 1:
-        sys.exit("--max-output-tokens must be >= 1")
+    if args.max_output_tokens < 0:
+        sys.exit("--max-output-tokens must be >= 0")
     for price_name in (
         "input_price_per_1m",
         "output_price_per_1m",

@@ -980,12 +980,13 @@ def call_model(
                         payload = {
                             "model": model,
                             "temperature": temperature,
-                            "max_tokens": max_output_tokens,
                             "messages": [
                                 {"role": "system", "content": system_prompt},
                                 {"role": "user", "content": user_content},
                             ],
                         }
+                        if max_output_tokens > 0:
+                            payload["max_tokens"] = max_output_tokens
                         if reasoning_effort:
                             payload["reasoning"] = {"effort": reasoning_effort}
                         # Some OpenAI-compatible servers (for example strict vLLM deployments)

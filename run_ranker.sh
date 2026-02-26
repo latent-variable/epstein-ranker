@@ -144,7 +144,7 @@ Model/runtime options:
   --debug-image-dir PATH     Save intermediate rendered/packed images + timing JSONs
   --flow-logs                Enable per-row queue/prep/request timing logs (default)
   --no-flow-logs             Disable per-row flow logs
-  --max-output-tokens N      Max completion tokens per request (default: 900)
+  --max-output-tokens N      Max completion tokens per request (default: 900, 0 = no cap)
   --temperature FLOAT        Sampling temperature (default: 0.0)
   --input-price-per-1m USD   Input token price (USD per 1M tokens) for cost tracking
   --output-price-per-1m USD  Output token price (USD per 1M tokens) for cost tracking
