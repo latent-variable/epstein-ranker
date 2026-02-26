@@ -4,6 +4,7 @@ import sys
 import tempfile
 import time
 import unittest
+from collections import deque
 from pathlib import Path
 from unittest import mock
 
@@ -523,6 +524,40 @@ class GptRankerHelpersTest(unittest.TestCase):
                 "IMAGES/0001/EFTA00000001.pdf",
                 checkpoint.read_text(encoding="utf-8"),
             )
+
+    def test_chunk_bounds_for_row_index_applies_chunk_size_and_end_row(self) -> None:
+        self.assertEqual(
+            gpt_ranker.chunk_bounds_for_row_index(18001, chunk_size=1000),
+            (18001, 19000),
+        )
+        self.assertEqual(
+            gpt_ranker.chunk_bounds_for_row_index(18555, chunk_size=1000, end_row=18700),
+            (18001, 18700),
+        )
+        self.assertIsNone(gpt_ranker.chunk_bounds_for_row_index(10, chunk_size=0))
+
+    def test_collect_ready_row_indices_keeps_chunk_order_but_allows_other_chunks(self) -> None:
+        emit_order = deque()
+        emit_order_by_chunk = {
+            (17001, 18000): deque([17001, 17002]),
+            (18001, 19000): deque([18001, 18002]),
+        }
+        pending_results = {
+            17002: {"type": "record"},
+            18001: {"type": "record"},
+            18002: {"type": "record"},
+        }
+
+        ready = gpt_ranker.collect_ready_row_indices(
+            chunk_mode=True,
+            emit_order=emit_order,
+            emit_order_by_chunk=emit_order_by_chunk,
+            pending_results=pending_results,
+        )
+
+        self.assertEqual(ready, [18001, 18002])
+        self.assertEqual(list(emit_order_by_chunk[(17001, 18000)]), [17001, 17002])
+        self.assertNotIn((18001, 19000), emit_order_by_chunk)
 
     def test_pdf_page_count_cache_persists_between_instances(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

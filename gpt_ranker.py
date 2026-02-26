@@ -474,6 +474,46 @@ def load_chunk_source_ids(chunk_dir: Path) -> Set[str]:
     return completed
 
 
+def chunk_bounds_for_row_index(
+    row_idx: int,
+    *,
+    chunk_size: int,
+    end_row: Optional[int] = None,
+) -> Optional[Tuple[int, int]]:
+    if chunk_size <= 0:
+        return None
+    chunk_start = ((row_idx - 1) // chunk_size) * chunk_size + 1
+    chunk_end = chunk_start + chunk_size - 1
+    if end_row is not None:
+        chunk_end = min(chunk_end, end_row)
+    return (chunk_start, chunk_end)
+
+
+def collect_ready_row_indices(
+    *,
+    chunk_mode: bool,
+    emit_order: Deque[int],
+    emit_order_by_chunk: Dict[Tuple[int, int], Deque[int]],
+    pending_results: Dict[int, Dict[str, Any]],
+) -> List[int]:
+    ready: List[int] = []
+    if not chunk_mode:
+        while emit_order and emit_order[0] in pending_results:
+            ready.append(emit_order.popleft())
+        return ready
+
+    empty_chunks: List[Tuple[int, int]] = []
+    for chunk_bounds in sorted(emit_order_by_chunk.keys()):
+        queue = emit_order_by_chunk[chunk_bounds]
+        while queue and queue[0] in pending_results:
+            ready.append(queue.popleft())
+        if not queue:
+            empty_chunks.append(chunk_bounds)
+    for chunk_bounds in empty_chunks:
+        emit_order_by_chunk.pop(chunk_bounds, None)
+    return ready
+
+
 def load_resume_completed_ids(args: argparse.Namespace) -> Set[str]:
     completed_source_ids: Set[str] = set()
     if args.resume:
@@ -1671,11 +1711,14 @@ class OutputRouter:
         self.rows_processed_total += 1
 
     def _chunk_bounds(self, row_idx: int) -> Tuple[int, int]:
-        chunk_start = ((row_idx - 1) // self.chunk_size) * self.chunk_size + 1
-        chunk_end = chunk_start + self.chunk_size - 1
-        if self.args.end_row is not None:
-            chunk_end = min(chunk_end, self.args.end_row)
-        return (chunk_start, chunk_end)
+        chunk_bounds = chunk_bounds_for_row_index(
+            row_idx,
+            chunk_size=self.chunk_size,
+            end_row=self.args.end_row,
+        )
+        if chunk_bounds is None:
+            raise RuntimeError("Chunk bounds requested while chunk mode is disabled.")
+        return chunk_bounds
 
     def _ensure_chunk(self, chunk_bounds: Tuple[int, int]) -> None:
         if self.current_chunk == chunk_bounds:
@@ -2811,6 +2854,7 @@ def main() -> None:
     if args.flow_logs:
         print("Flow logs enabled: emitting queue/prep/request timing per row.", flush=True)
     emit_order: Deque[int] = deque()
+    emit_order_by_chunk: Dict[Tuple[int, int], Deque[int]] = {}
     pending_results: Dict[int, Dict[str, Any]] = {}
     in_flight: Dict[concurrent.futures.Future[Dict[str, Any]], Dict[str, Any]] = {}
     scheduled = 0
@@ -2948,91 +2992,99 @@ def main() -> None:
             fallback_result["_request_meta"] = request_meta
             return fallback_result
 
-    def flush_ready() -> None:
+    def process_completed_outcome(row_idx: int, outcome: Dict[str, Any]) -> None:
         nonlocal processed, skipped, failed, model_scored, failure_log_records, failure_source_ids
         nonlocal content_filter_blocked_written, content_filter_blocked_seen
         nonlocal local_fallback_processed, local_fallback_processed_by_category
-        while emit_order and emit_order[0] in pending_results:
-            row_idx = emit_order.popleft()
+        if outcome["type"] == "error":
+            failed += 1
+            row_ref = row_source_id(outcome["row"]) or outcome["row"].get("filename", "")
+            error_text = str(outcome["error"])
+            error_category = outcome.get("error_category") or classify_failure_reason(error_text)
+            failure_source_ids.add(row_ref)
+            if (
+                args.content_filter_blocklist
+                and error_category == "provider_content_filter"
+            ):
+                mark_content_filter_blocked(row_ref)
+            if args.failure_log:
+                append_failure_log(
+                    args.failure_log,
+                    {
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "source_row_index": row_idx,
+                        "source_id": row_ref,
+                        "filename": outcome["row"].get("filename", ""),
+                        "document_part": outcome["row"].get("document_part", ""),
+                        "part_index": outcome["row"].get("part_index"),
+                        "part_total": outcome["row"].get("part_total"),
+                        "source_pdf_index": outcome["row"].get("source_pdf_index"),
+                        "error_category": error_category,
+                        "error": error_text,
+                        "endpoint": args.endpoint,
+                        "model": args.model,
+                        "openrouter_provider": args.openrouter_provider,
+                    },
+                )
+                failure_log_records += 1
+            print(
+                f"  ! Failed to analyze {row_ref}: {error_text}",
+                file=sys.stderr,
+            )
+            return
+
+        csv_row, json_record = build_output_records(
+            idx=row_idx,
+            source_row=outcome["row"],
+            result=outcome["result"],
+            args=args,
+            config_metadata=config_metadata,
+            quality=outcome["quality"],
+            processing_status=outcome["processing_status"],
+            skip_reason=outcome["skip_reason"],
+        )
+        output_router.write(row_idx, csv_row, json_record)
+
+        row_key = row_source_id(outcome["row"])
+        request_meta = (
+            outcome["result"].get("_request_meta")
+            if isinstance(outcome["result"], dict)
+            and isinstance(outcome["result"].get("_request_meta"), dict)
+            else {}
+        )
+        local_fallback_meta = (
+            request_meta.get("local_fallback")
+            if isinstance(request_meta.get("local_fallback"), dict)
+            else {}
+        )
+        if local_fallback_meta.get("trigger") == "provider_content_filter":
+            mark_content_filter_blocked(row_key)
+        trigger = local_fallback_meta.get("trigger")
+        if isinstance(trigger, str) and trigger:
+            local_fallback_processed += 1
+            local_fallback_processed_by_category[trigger] = (
+                local_fallback_processed_by_category.get(trigger, 0) + 1
+            )
+        if checkpoint_handle:
+            checkpoint_handle.write(row_key + "\n")
+            checkpoint_handle.flush()
+        completed_source_ids.add(row_key)
+        processed += 1
+        if outcome["processing_status"] == "skipped":
+            skipped += 1
+        else:
+            model_scored += 1
+
+    def flush_ready() -> None:
+        ready_rows = collect_ready_row_indices(
+            chunk_mode=(output_router.mode == "chunk"),
+            emit_order=emit_order,
+            emit_order_by_chunk=emit_order_by_chunk,
+            pending_results=pending_results,
+        )
+        for row_idx in ready_rows:
             outcome = pending_results.pop(row_idx)
-            if outcome["type"] == "error":
-                failed += 1
-                row_ref = row_source_id(outcome["row"]) or outcome["row"].get("filename", "")
-                error_text = str(outcome["error"])
-                error_category = outcome.get("error_category") or classify_failure_reason(error_text)
-                failure_source_ids.add(row_ref)
-                if (
-                    args.content_filter_blocklist
-                    and error_category == "provider_content_filter"
-                ):
-                    mark_content_filter_blocked(row_ref)
-                if args.failure_log:
-                    append_failure_log(
-                        args.failure_log,
-                        {
-                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                            "source_row_index": row_idx,
-                            "source_id": row_ref,
-                            "filename": outcome["row"].get("filename", ""),
-                            "document_part": outcome["row"].get("document_part", ""),
-                            "part_index": outcome["row"].get("part_index"),
-                            "part_total": outcome["row"].get("part_total"),
-                            "source_pdf_index": outcome["row"].get("source_pdf_index"),
-                            "error_category": error_category,
-                            "error": error_text,
-                            "endpoint": args.endpoint,
-                            "model": args.model,
-                            "openrouter_provider": args.openrouter_provider,
-                        },
-                    )
-                    failure_log_records += 1
-                print(
-                    f"  ! Failed to analyze {row_ref}: {error_text}",
-                    file=sys.stderr,
-                )
-                continue
-
-            csv_row, json_record = build_output_records(
-                idx=row_idx,
-                source_row=outcome["row"],
-                result=outcome["result"],
-                args=args,
-                config_metadata=config_metadata,
-                quality=outcome["quality"],
-                processing_status=outcome["processing_status"],
-                skip_reason=outcome["skip_reason"],
-            )
-            output_router.write(row_idx, csv_row, json_record)
-
-            row_key = row_source_id(outcome["row"])
-            request_meta = (
-                outcome["result"].get("_request_meta")
-                if isinstance(outcome["result"], dict)
-                and isinstance(outcome["result"].get("_request_meta"), dict)
-                else {}
-            )
-            local_fallback_meta = (
-                request_meta.get("local_fallback")
-                if isinstance(request_meta.get("local_fallback"), dict)
-                else {}
-            )
-            if local_fallback_meta.get("trigger") == "provider_content_filter":
-                mark_content_filter_blocked(row_key)
-            trigger = local_fallback_meta.get("trigger")
-            if isinstance(trigger, str) and trigger:
-                local_fallback_processed += 1
-                local_fallback_processed_by_category[trigger] = (
-                    local_fallback_processed_by_category.get(trigger, 0) + 1
-                )
-            if checkpoint_handle:
-                checkpoint_handle.write(row_key + "\n")
-                checkpoint_handle.flush()
-            completed_source_ids.add(row_key)
-            processed += 1
-            if outcome["processing_status"] == "skipped":
-                skipped += 1
-            else:
-                model_scored += 1
+            process_completed_outcome(row_idx, outcome)
 
     def harvest_completed(*, block: bool, wait_for_all: bool = False) -> None:
         if not in_flight:
@@ -3163,7 +3215,15 @@ def main() -> None:
 
             report_resume_skip_progress(force=True)
             scheduled += 1
-            emit_order.append(idx)
+            chunk_bounds = chunk_bounds_for_row_index(
+                idx,
+                chunk_size=args.chunk_size,
+                end_row=args.end_row,
+            )
+            if chunk_bounds is None:
+                emit_order.append(idx)
+            else:
+                emit_order_by_chunk.setdefault(chunk_bounds, deque()).append(idx)
 
             if input_kind == "text":
                 quality = assess_text_quality(text)
