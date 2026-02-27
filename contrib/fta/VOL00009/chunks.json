@@ -1,8 +1,8 @@
 {
   "metadata": {
     "total_dataset_rows": "unknown",
-    "rows_processed": 258540,
-    "last_updated": "2026-02-27 13:59:39"
+    "rows_processed": 258542,
+    "last_updated": "2026-02-27 14:38:36"
   },
   "chunks": [
     {
@@ -951,7 +951,7 @@
       "start_row": 157001,
       "end_row": 158000,
       "json": "contrib/fta/VOL00009/epstein_ranked_157001_158000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 158001,
@@ -1245,7 +1245,7 @@
       "start_row": 206001,
       "end_row": 207000,
       "json": "contrib/fta/VOL00009/epstein_ranked_206001_207000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 207001,

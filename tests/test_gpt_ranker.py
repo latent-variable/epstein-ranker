@@ -101,6 +101,30 @@ class GptRankerHelpersTest(unittest.TestCase):
         self.assertEqual(rows[2]["part_start_page"], 9)
         self.assertEqual(rows[2]["part_end_page"], 10)
 
+    def test_iter_rows_resume_fast_path_skips_page_count_for_completed_file_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            image_pdf = root / "doc.pdf"
+            image_pdf.write_bytes(b"%PDF-1.4\n")
+            with mock.patch.object(
+                gpt_ranker,
+                "detect_pdf_page_count",
+                side_effect=AssertionError("page count should not be requested"),
+            ):
+                rows = list(
+                    gpt_ranker.iter_rows(
+                        root,
+                        input_glob="*.pdf",
+                        include_text=False,
+                        processing_mode="image",
+                        pdf_part_pages=4,
+                        resume_completed_file_ids={"doc.pdf"},
+                    )
+                )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source_id"], "doc.pdf")
+        self.assertEqual(rows[0]["part_total"], 1)
+
     def test_iter_rows_tracks_pdf_file_index_across_parts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

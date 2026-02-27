@@ -115,7 +115,9 @@ class PdfPageCountCache:
 
     def _cache_key(self, pdf_path: Path) -> str:
         try:
-            return str(pdf_path.resolve().as_posix())
+            # Avoid Path.resolve() here: it is significantly slower on large
+            # directory scans and can dominate resume-time cache lookups.
+            return str(pdf_path.absolute().as_posix())
         except OSError:
             return str(pdf_path.as_posix())
 
@@ -200,6 +202,7 @@ def iter_rows(
     processing_mode: str = "auto",
     pdf_part_pages: int = 0,
     pdf_page_count_cache: Optional[PdfPageCountCache] = None,
+    resume_completed_file_ids: Optional[Set[str]] = None,
 ) -> Iterable[Dict[str, Any]]:
     if path.is_dir():
         pdf_file_index = 0
@@ -214,6 +217,32 @@ def iter_rows(
                 pdf_file_index += 1
                 source_pdf_index = pdf_file_index
             rel_filename = file_path.relative_to(path).as_posix()
+            base_row: Dict[str, Any] = {
+                "filename": rel_filename,
+                "source_id": rel_filename,
+                "text": "",
+                "input_kind": input_kind,
+                "source_path": str(file_path),
+                "part_index": 1,
+                "part_total": 1,
+                "part_start_page": 1,
+                "part_end_page": None,
+                "document_total_pages": None,
+                "source_pdf_index": source_pdf_index,
+                "document_part": "",
+                "analysis_filename": rel_filename,
+            }
+            if (
+                input_kind == "image"
+                and file_path.suffix.lower() == ".pdf"
+                and pdf_part_pages > 0
+                and resume_completed_file_ids is not None
+                and rel_filename in resume_completed_file_ids
+            ):
+                # Fast resume path: already-checkpointed file-level IDs can be skipped
+                # without page-count probing/splitting.
+                yield base_row
+                continue
             if (
                 input_kind == "image"
                 and file_path.suffix.lower() == ".pdf"
@@ -253,24 +282,9 @@ def iter_rows(
                             ),
                         }
                     continue
-            row: Dict[str, Any] = {
-                "filename": rel_filename,
-                "source_id": rel_filename,
-                "text": "",
-                "input_kind": input_kind,
-                "source_path": str(file_path),
-                "part_index": 1,
-                "part_total": 1,
-                "part_start_page": 1,
-                "part_end_page": None,
-                "document_total_pages": None,
-                "source_pdf_index": source_pdf_index,
-                "document_part": "",
-                "analysis_filename": rel_filename,
-            }
             if include_text and input_kind == "text":
-                row["text"] = file_path.read_text(encoding="utf-8", errors="replace")
-            yield row
+                base_row["text"] = file_path.read_text(encoding="utf-8", errors="replace")
+            yield base_row
         return
 
     if processing_mode == "image":
@@ -2606,6 +2620,9 @@ def main() -> None:
         fieldnames.append("action_items")
 
     processed = 0
+    resume_file_checkpoint_ids: Optional[Set[str]] = None
+    if args.resume and args.checkpoint:
+        resume_file_checkpoint_ids = load_checkpoint(args.checkpoint)
     completed_source_ids: Set[str] = load_resume_completed_ids(args)
     if completed_source_ids:
         print(f"Skipping {len(completed_source_ids)} pre-processed source ids.")
@@ -3179,6 +3196,7 @@ def main() -> None:
                 processing_mode=active_processing_mode,
                 pdf_part_pages=args.pdf_part_pages,
                 pdf_page_count_cache=pdf_page_count_cache,
+                resume_completed_file_ids=resume_file_checkpoint_ids,
             ),
             start=1,
         ):
