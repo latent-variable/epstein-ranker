@@ -1,8 +1,8 @@
 {
   "metadata": {
     "total_dataset_rows": "unknown",
-    "rows_processed": 460030,
-    "last_updated": "2026-02-28 18:07:28"
+    "rows_processed": 533330,
+    "last_updated": "2026-03-01 07:02:54"
   },
   "chunks": [
     {
@@ -1203,13 +1203,13 @@
       "start_row": 199001,
       "end_row": 200000,
       "json": "contrib/fta/VOL00009/epstein_ranked_199001_200000.jsonl",
-      "row_count": 995
+      "row_count": 1000
     },
     {
       "start_row": 200001,
       "end_row": 201000,
       "json": "contrib/fta/VOL00009/epstein_ranked_200001_201000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 201001,
@@ -1557,7 +1557,7 @@
       "start_row": 258001,
       "end_row": 259000,
       "json": "contrib/fta/VOL00009/epstein_ranked_258001_259000.jsonl",
-      "row_count": 394
+      "row_count": 395
     },
     {
       "start_row": 259001,
@@ -1839,13 +1839,13 @@
       "start_row": 305001,
       "end_row": 306000,
       "json": "contrib/fta/VOL00009/epstein_ranked_305001_306000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 306001,
       "end_row": 307000,
       "json": "contrib/fta/VOL00009/epstein_ranked_306001_307000.jsonl",
-      "row_count": 998
+      "row_count": 1000
     },
     {
       "start_row": 307001,
@@ -1893,13 +1893,13 @@
       "start_row": 314001,
       "end_row": 315000,
       "json": "contrib/fta/VOL00009/epstein_ranked_314001_315000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 315001,
       "end_row": 316000,
       "json": "contrib/fta/VOL00009/epstein_ranked_315001_316000.jsonl",
-      "row_count": 998
+      "row_count": 1000
     },
     {
       "start_row": 316001,
@@ -1911,7 +1911,7 @@
       "start_row": 317001,
       "end_row": 318000,
       "json": "contrib/fta/VOL00009/epstein_ranked_317001_318000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 318001,
@@ -2037,7 +2037,7 @@
       "start_row": 338001,
       "end_row": 339000,
       "json": "contrib/fta/VOL00009/epstein_ranked_338001_339000.jsonl",
-      "row_count": 940
+      "row_count": 1000
     },
     {
       "start_row": 339001,
@@ -2085,7 +2085,7 @@
       "start_row": 346001,
       "end_row": 347000,
       "json": "contrib/fta/VOL00009/epstein_ranked_346001_347000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 347001,
@@ -2121,7 +2121,7 @@
       "start_row": 352001,
       "end_row": 353000,
       "json": "contrib/fta/VOL00009/epstein_ranked_352001_353000.jsonl",
-      "row_count": 939
+      "row_count": 1000
     },
     {
       "start_row": 353001,
@@ -2211,7 +2211,7 @@
       "start_row": 367001,
       "end_row": 368000,
       "json": "contrib/fta/VOL00009/epstein_ranked_367001_368000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 368001,
@@ -2499,7 +2499,7 @@
       "start_row": 415001,
       "end_row": 416000,
       "json": "contrib/fta/VOL00009/epstein_ranked_415001_416000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 416001,
@@ -2745,7 +2745,7 @@
       "start_row": 456001,
       "end_row": 457000,
       "json": "contrib/fta/VOL00009/epstein_ranked_456001_457000.jsonl",
-      "row_count": 999
+      "row_count": 1000
     },
     {
       "start_row": 457001,
@@ -2763,7 +2763,445 @@
       "start_row": 459001,
       "end_row": 460000,
       "json": "contrib/fta/VOL00009/epstein_ranked_459001_460000.jsonl",
-      "row_count": 49
+      "row_count": 1000
+    },
+    {
+      "start_row": 460001,
+      "end_row": 461000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_460001_461000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 461001,
+      "end_row": 462000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_461001_462000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 462001,
+      "end_row": 463000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_462001_463000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 463001,
+      "end_row": 464000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_463001_464000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 464001,
+      "end_row": 465000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_464001_465000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 465001,
+      "end_row": 466000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_465001_466000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 466001,
+      "end_row": 467000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_466001_467000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 467001,
+      "end_row": 468000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_467001_468000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 468001,
+      "end_row": 469000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_468001_469000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 469001,
+      "end_row": 470000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_469001_470000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 470001,
+      "end_row": 471000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_470001_471000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 471001,
+      "end_row": 472000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_471001_472000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 472001,
+      "end_row": 473000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_472001_473000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 473001,
+      "end_row": 474000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_473001_474000.jsonl",
+      "row_count": 998
+    },
+    {
+      "start_row": 474001,
+      "end_row": 475000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_474001_475000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 475001,
+      "end_row": 476000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_475001_476000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 476001,
+      "end_row": 477000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_476001_477000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 477001,
+      "end_row": 478000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_477001_478000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 478001,
+      "end_row": 479000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_478001_479000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 479001,
+      "end_row": 480000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_479001_480000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 480001,
+      "end_row": 481000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_480001_481000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 481001,
+      "end_row": 482000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_481001_482000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 482001,
+      "end_row": 483000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_482001_483000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 483001,
+      "end_row": 484000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_483001_484000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 484001,
+      "end_row": 485000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_484001_485000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 485001,
+      "end_row": 486000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_485001_486000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 486001,
+      "end_row": 487000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_486001_487000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 487001,
+      "end_row": 488000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_487001_488000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 488001,
+      "end_row": 489000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_488001_489000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 489001,
+      "end_row": 490000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_489001_490000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 490001,
+      "end_row": 491000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_490001_491000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 491001,
+      "end_row": 492000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_491001_492000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 492001,
+      "end_row": 493000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_492001_493000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 493001,
+      "end_row": 494000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_493001_494000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 494001,
+      "end_row": 495000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_494001_495000.jsonl",
+      "row_count": 999
+    },
+    {
+      "start_row": 495001,
+      "end_row": 496000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_495001_496000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 496001,
+      "end_row": 497000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_496001_497000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 497001,
+      "end_row": 498000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_497001_498000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 498001,
+      "end_row": 499000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_498001_499000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 499001,
+      "end_row": 500000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_499001_500000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 500001,
+      "end_row": 501000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_500001_501000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 501001,
+      "end_row": 502000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_501001_502000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 502001,
+      "end_row": 503000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_502001_503000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 503001,
+      "end_row": 504000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_503001_504000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 504001,
+      "end_row": 505000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_504001_505000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 505001,
+      "end_row": 506000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_505001_506000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 506001,
+      "end_row": 507000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_506001_507000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 507001,
+      "end_row": 508000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_507001_508000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 508001,
+      "end_row": 509000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_508001_509000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 509001,
+      "end_row": 510000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_509001_510000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 510001,
+      "end_row": 511000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_510001_511000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 511001,
+      "end_row": 512000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_511001_512000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 512001,
+      "end_row": 513000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_512001_513000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 513001,
+      "end_row": 514000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_513001_514000.jsonl",
+      "row_count": 999
+    },
+    {
+      "start_row": 514001,
+      "end_row": 515000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_514001_515000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 515001,
+      "end_row": 516000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_515001_516000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 516001,
+      "end_row": 517000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_516001_517000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 517001,
+      "end_row": 518000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_517001_518000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 518001,
+      "end_row": 519000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_518001_519000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 519001,
+      "end_row": 520000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_519001_520000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 520001,
+      "end_row": 521000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_520001_521000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 521001,
+      "end_row": 522000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_521001_522000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 522001,
+      "end_row": 523000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_522001_523000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 523001,
+      "end_row": 524000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_523001_524000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 524001,
+      "end_row": 525000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_524001_525000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 525001,
+      "end_row": 526000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_525001_526000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 526001,
+      "end_row": 527000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_526001_527000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 527001,
+      "end_row": 528000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_527001_528000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 528001,
+      "end_row": 529000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_528001_529000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 529001,
+      "end_row": 530000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_529001_530000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 530001,
+      "end_row": 531000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_530001_531000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 531001,
+      "end_row": 532000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_531001_532000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 532001,
+      "end_row": 533000,
+      "json": "contrib/fta/VOL00009/epstein_ranked_532001_533000.jsonl",
+      "row_count": 214
     }
   ]
 }
