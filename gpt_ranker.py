@@ -566,6 +566,22 @@ def load_resume_completed_ids(args: argparse.Namespace) -> Set[str]:
 
 def classify_failure_reason(error_text: str) -> str:
     lowered = error_text.lower()
+    if (
+        "failed to render pdf page" in lowered
+        and (
+            "syntax error" in lowered
+            or "syntax warning" in lowered
+            or "document stream is empty" in lowered
+            or "couldn't find trailer dictionary" in lowered
+            or "couldn't read xref table" in lowered
+            or "invalid xref entry" in lowered
+            or "top-level pages object is wrong type" in lowered
+            or "wrong page range given" in lowered
+        )
+    ):
+        return "input_file_error"
+    if "pdf page window start" in lowered and "exceeds page count" in lowered:
+        return "input_file_error"
     if "data_inspection_failed" in lowered or "inappropriate content" in lowered:
         return "provider_content_filter"
     if "http 500" in lowered or "internal server error" in lowered:
@@ -2878,6 +2894,7 @@ def main() -> None:
     skipped = 0
     failed = 0
     failure_log_records = 0
+    terminal_input_failures_checkpointed = 0
     failure_source_ids: Set[str] = set()
     content_filter_blocked_written = 0
     content_filter_blocked_seen: Set[str] = set()
@@ -3013,6 +3030,7 @@ def main() -> None:
         nonlocal processed, skipped, failed, model_scored, failure_log_records, failure_source_ids
         nonlocal content_filter_blocked_written, content_filter_blocked_seen
         nonlocal local_fallback_processed, local_fallback_processed_by_category
+        nonlocal terminal_input_failures_checkpointed
         if outcome["type"] == "error":
             failed += 1
             row_ref = row_source_id(outcome["row"]) or outcome["row"].get("filename", "")
@@ -3048,6 +3066,19 @@ def main() -> None:
                 f"  ! Failed to analyze {row_ref}: {error_text}",
                 file=sys.stderr,
             )
+            if error_category == "input_file_error" and row_ref:
+                if row_ref not in completed_source_ids:
+                    completed_source_ids.add(row_ref)
+                    if checkpoint_handle:
+                        checkpoint_handle.write(row_ref + "\n")
+                        checkpoint_handle.flush()
+                    terminal_input_failures_checkpointed += 1
+                if args.flow_logs:
+                    print(
+                        f"[Row {row_idx}] [terminal] {row_ref} | "
+                        "classified as input_file_error; checkpointed to skip on resume.",
+                        flush=True,
+                    )
             return
 
         csv_row, json_record = build_output_records(
@@ -3484,6 +3515,11 @@ def main() -> None:
         complete_msg = (
             f"{complete_msg}\nFailure log: {args.failure_log} "
             f"(records written: {failure_log_records}, unique source ids: {len(failure_source_ids)})"
+        )
+    if terminal_input_failures_checkpointed > 0:
+        complete_msg = (
+            f"{complete_msg}\nTerminal input-file failures checkpointed: "
+            f"{terminal_input_failures_checkpointed}"
         )
     if args.content_filter_blocklist:
         complete_msg = (

@@ -191,6 +191,13 @@ class GptRankerHelpersTest(unittest.TestCase):
         )
         self.assertEqual(category, "provider_content_filter")
 
+    def test_classify_failure_reason_detects_terminal_pdf_input_error(self) -> None:
+        category = gpt_ranker.classify_failure_reason(
+            "Failed to render PDF page for /tmp/bad.pdf: Syntax Error: Couldn't find trailer "
+            "dictionary\nWrong page range given: the first page (1) can not be after the last page (0)."
+        )
+        self.assertEqual(category, "input_file_error")
+
     def test_skip_reason_flags_low_quality_rows(self) -> None:
         quality = gpt_ranker.assess_text_quality("x")
         reason = gpt_ranker.build_skip_reason(quality, self.skip_args)

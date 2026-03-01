@@ -11,8 +11,18 @@ DRY_RUN=0
 SKIP_LOCAL_RETRY=0
 CONCURRENT=0
 INTERRUPTED=0
+TMP_FILES=()
 
 trap 'INTERRUPTED=1' INT
+cleanup_tmp_files() {
+  if (( ${#TMP_FILES[@]} == 0 )); then
+    return
+  fi
+  for tmp_file in "${TMP_FILES[@]}"; do
+    [[ -n "$tmp_file" ]] && rm -f "$tmp_file" 2>/dev/null || true
+  done
+}
+trap cleanup_tmp_files EXIT
 
 OPENROUTER_MODEL="${OPENROUTER_MODEL:-qwen/qwen3-vl-30b-a3b-thinking}"
 OPENROUTER_PROVIDER="${OPENROUTER_PROVIDER:-alibaba}"
@@ -297,6 +307,69 @@ if [[ ! -s "$FAIL_LOG" ]]; then
   exit 0
 fi
 
+CHECKPOINT_PATH="data/workspaces/${VOL_TAG}/state/.epstein_checkpoint"
+UNRESOLVED_FAIL_IDS_FILE="$(mktemp "${TMPDIR:-/tmp}/hybrid_unresolved_${VOLUME}.XXXXXX")"
+TMP_FILES+=("$UNRESOLVED_FAIL_IDS_FILE")
+UNRESOLVED_FAIL_COUNT="$(
+python - "$FAIL_LOG" "$CHECKPOINT_PATH" "$UNRESOLVED_FAIL_IDS_FILE" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+fail_log = Path(sys.argv[1])
+checkpoint = Path(sys.argv[2])
+out_path = Path(sys.argv[3])
+
+completed = set()
+if checkpoint.exists():
+    with checkpoint.open(encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            source_id = line.strip()
+            if source_id:
+                completed.add(source_id)
+
+ordered_ids = []
+seen = set()
+with fail_log.open(encoding="utf-8", errors="replace") as handle:
+    for raw_line in handle:
+        line = raw_line.strip()
+        if not line:
+            continue
+        source_id = None
+        if line.startswith("{"):
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                value = payload.get("source_id")
+                if isinstance(value, str) and value.strip():
+                    source_id = value.strip()
+        else:
+            source_id = line
+        if not source_id or source_id in seen:
+            continue
+        seen.add(source_id)
+        if source_id in completed:
+            continue
+        ordered_ids.append(source_id)
+
+out_path.parent.mkdir(parents=True, exist_ok=True)
+with out_path.open("w", encoding="utf-8") as handle:
+    for source_id in ordered_ids:
+        handle.write(source_id + "\n")
+
+print(len(ordered_ids))
+PY
+)"
+
+if [[ "$UNRESOLVED_FAIL_COUNT" == "0" ]]; then
+  echo "[done] Cloud pass finished; all failed source IDs are already resolved/checkpointed."
+  exit 0
+fi
+
 LOCAL_CMD=(
   ./run_ranker.sh
   --volumes "$VOLUME"
@@ -305,7 +378,7 @@ LOCAL_CMD=(
   --model "$LOCAL_MODEL"
   --api-format "$LOCAL_API_FORMAT"
   --parallel-scheduling "$LOCAL_PARALLEL_SCHEDULING"
-  --only-source-ids-file "$FAIL_LOG"
+  --only-source-ids-file "$UNRESOLVED_FAIL_IDS_FILE"
 )
 if [[ -n "$START_PDF" ]]; then  LOCAL_CMD+=(--start-pdf "$START_PDF"); fi
 if [[ -n "$END_PDF" ]]; then    LOCAL_CMD+=(--end-pdf "$END_PDF"); fi
@@ -313,7 +386,7 @@ if [[ -n "$LOCAL_PARALLEL" ]]; then LOCAL_CMD+=(--parallel "$LOCAL_PARALLEL"); f
 if (( DRY_RUN )); then          LOCAL_CMD+=(--dry-run); fi
 LOCAL_CMD+=(-- --workload-scan defer)
 
-echo "[local-retry] Found failed rows; retrying locally using $FAIL_LOG"
+echo "[local-retry] Found $UNRESOLVED_FAIL_COUNT unresolved failed row(s); retrying locally."
 printf '[local-retry] '
 printf '%q ' "${LOCAL_CMD[@]}"
 printf '\n'
