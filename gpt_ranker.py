@@ -534,25 +534,68 @@ def load_resume_completed_ids(args: argparse.Namespace) -> Set[str]:
         checkpoint_ids = load_checkpoint(args.checkpoint)
         if checkpoint_ids:
             completed_source_ids |= checkpoint_ids
-        else:
-            # Compatibility path for legacy runs that have outputs but no checkpoint.
+
+        def outputs_newer_than_checkpoint() -> bool:
+            if not args.checkpoint or not args.checkpoint.exists():
+                return True
+            try:
+                checkpoint_mtime_ns = args.checkpoint.stat().st_mtime_ns
+            except OSError:
+                return True
+
+            candidates: List[Path] = []
+            if args.json_output and args.json_output.exists():
+                candidates.append(args.json_output)
+            if args.chunk_manifest and args.chunk_manifest.exists():
+                candidates.append(args.chunk_manifest)
+
+            for candidate in candidates:
+                try:
+                    if candidate.stat().st_mtime_ns > checkpoint_mtime_ns:
+                        return True
+                except OSError:
+                    continue
+
+            if args.chunk_size > 0 and args.chunk_dir.exists():
+                for chunk_path in args.chunk_dir.glob("epstein_ranked_*.jsonl"):
+                    try:
+                        if chunk_path.stat().st_mtime_ns > checkpoint_mtime_ns:
+                            return True
+                    except OSError:
+                        continue
+            return False
+
+        # When outputs are newer than checkpoint (for example after git merges),
+        # merge IDs from output files so resume does not reprocess already-ranked rows.
+        should_sync_outputs = (
+            not checkpoint_ids
+            or outputs_newer_than_checkpoint()
+        )
+        if should_sync_outputs:
             output_backed_ids: Set[str] = set()
             output_backed_ids |= load_jsonl_filenames(args.json_output)
             if args.chunk_size > 0:
                 output_backed_ids |= load_chunk_source_ids(args.chunk_dir)
-            if output_backed_ids:
-                completed_source_ids |= output_backed_ids
+
+            missing_output_ids = output_backed_ids - completed_source_ids
+            if missing_output_ids:
+                completed_source_ids |= missing_output_ids
+                reason = (
+                    "missing/empty"
+                    if not checkpoint_ids
+                    else "older than current outputs"
+                )
                 print(
-                    "Resume checkpoint missing/empty; bootstrapped processed IDs from outputs. "
-                    "Future resumes will use the checkpoint for faster startup.",
+                    "Resume checkpoint is "
+                    f"{reason}; merged {len(missing_output_ids):,} processed ID(s) from outputs.",
                     flush=True,
                 )
                 if args.checkpoint:
                     args.checkpoint.parent.mkdir(parents=True, exist_ok=True)
                     with args.checkpoint.open("a", encoding="utf-8") as handle:
-                        for source_id in sorted(output_backed_ids):
+                        for source_id in sorted(missing_output_ids):
                             handle.write(source_id + "\n")
-            else:
+            elif not checkpoint_ids:
                 print(
                     "Resume checkpoint missing/empty and no prior outputs found; "
                     "starting from the beginning.",
