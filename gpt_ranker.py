@@ -37,6 +37,7 @@ from ranker.constants import (
     TEXT_SUFFIXES,
 )
 from ranker.model_client import (
+    ContentFilterError,
     ModelRequestError,
     UnsupportedEndpointError,
     build_image_analysis_instruction,
@@ -3080,9 +3081,9 @@ def main() -> None:
             error_text = str(outcome["error"])
             error_category = outcome.get("error_category") or classify_failure_reason(error_text)
             failure_source_ids.add(row_ref)
-            if (
-                args.content_filter_blocklist
-                and error_category == "provider_content_filter"
+            if args.content_filter_blocklist and error_category in (
+                "provider_content_filter",
+                "model_output_error",
             ):
                 mark_content_filter_blocked(row_ref)
             if args.failure_log:
@@ -3109,7 +3110,11 @@ def main() -> None:
                 f"  ! Failed to analyze {row_ref}: {error_text}",
                 file=sys.stderr,
             )
-            if error_category == "input_file_error" and row_ref:
+            if error_category in (
+                "input_file_error",
+                "provider_content_filter",
+                "model_output_error",
+            ) and row_ref:
                 if row_ref not in completed_source_ids:
                     completed_source_ids.add(row_ref)
                     if checkpoint_handle:
@@ -3119,7 +3124,7 @@ def main() -> None:
                 if args.flow_logs:
                     print(
                         f"[Row {row_idx}] [terminal] {row_ref} | "
-                        "classified as input_file_error; checkpointed to skip on resume.",
+                        f"classified as {error_category}; checkpointed to skip on resume.",
                         flush=True,
                     )
             return
@@ -3224,6 +3229,8 @@ def main() -> None:
                 }
             except Exception as exc:  # noqa: BLE001
                 record_completion_for_eta()
+                error_text = str(exc)
+                error_category = classify_failure_reason(error_text)
                 if args.flow_logs:
                     duration = f"{wall_seconds:.2f}s" if wall_seconds is not None else "n/a"
                     print(
@@ -3231,11 +3238,31 @@ def main() -> None:
                         f"in_flight={len(in_flight)} | {exc}",
                         flush=True,
                     )
+                # Immediately blocklist and checkpoint terminal errors so they
+                # are persisted even if the process is interrupted before
+                # flush_ready() drains to this row index.
+                if error_category in (
+                    "provider_content_filter",
+                    "model_output_error",
+                    "input_file_error",
+                ):
+                    row_ref = row_source_id(row) or row.get("filename", "")
+                    if row_ref:
+                        if args.content_filter_blocklist and error_category in (
+                            "provider_content_filter",
+                            "model_output_error",
+                        ):
+                            mark_content_filter_blocked(row_ref)
+                        if row_ref not in completed_source_ids:
+                            completed_source_ids.add(row_ref)
+                            if checkpoint_handle:
+                                checkpoint_handle.write(row_ref + "\n")
+                                checkpoint_handle.flush()
                 pending_results[row_idx] = {
                     "type": "error",
                     "row": row,
-                    "error": str(exc),
-                    "error_category": classify_failure_reason(str(exc)),
+                    "error": error_text,
+                    "error_category": error_category,
                 }
         flush_ready()
 

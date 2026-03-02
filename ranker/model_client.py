@@ -41,6 +41,23 @@ class ModelRequestError(RuntimeError):
         self.retry_after_seconds = retry_after_seconds
 
 
+class ContentFilterError(ModelRequestError):
+    """Raised when a provider rejects input due to content filtering.
+
+    This is a permanent, non-retriable failure — retrying will never succeed and
+    wastes time + API credits.
+    """
+
+    def __init__(self, message: str, *, status_code: Optional[int] = None) -> None:
+        super().__init__(message, retriable=False, status_code=status_code)
+
+
+def _is_content_filter_error(response_text: str) -> bool:
+    """Detect provider content-filter rejections from the HTTP response body."""
+    lowered = response_text.lower()
+    return "data_inspection_failed" in lowered or "inappropriate content" in lowered
+
+
 def _is_empty_model_message_error(exc: Exception) -> bool:
     return isinstance(exc, ValueError) and "empty message" in str(exc).lower()
 
@@ -557,6 +574,12 @@ def post_request(
         )
     if response.status_code >= 400:
         snippet = response.text[:500].replace("\n", " ")
+        # Detect content-filter rejections early — no point retrying these.
+        if _is_content_filter_error(response.text):
+            raise ContentFilterError(
+                f"HTTP {response.status_code} from {url}: {snippet}",
+                status_code=response.status_code,
+            )
         retry_after_seconds = _parse_retry_after_seconds(response.headers.get("Retry-After"))
         if response.status_code == 429 and retry_after_seconds is None:
             # Providers often omit Retry-After; use a conservative cooldown.
@@ -1086,6 +1109,10 @@ def call_model(
             except UnsupportedEndpointError as exc:
                 last_error = exc
                 continue
+            except ContentFilterError:
+                # Content-filter rejections are permanent — retrying will never
+                # succeed.  Bail out immediately to free this slot.
+                raise
             except ModelRequestError as exc:
                 last_error = exc
                 saw_retriable_error = saw_retriable_error or exc.retriable
@@ -1115,5 +1142,5 @@ def call_model(
     )
     detail = str(last_error) if last_error else "unknown error"
     raise RuntimeError(
-        f"Failed to analyze after {max_retries} attempt(s). Tried: {candidate_urls}. Last error: {detail}"
+        f"Failed to analyze after {attempt} attempt(s). Tried: {candidate_urls}. Last error: {detail}"
     )
