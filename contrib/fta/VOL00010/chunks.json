@@ -1,8 +1,8 @@
 {
   "metadata": {
     "total_dataset_rows": "unknown",
-    "rows_processed": 456550,
-    "last_updated": "2026-03-02 16:51:51"
+    "rows_processed": 466597,
+    "last_updated": "2026-03-02 18:11:06"
   },
   "chunks": [
     {
@@ -2745,7 +2745,67 @@
       "start_row": 456001,
       "end_row": 457000,
       "json": "contrib/fta/VOL00010/epstein_ranked_456001_457000.jsonl",
-      "row_count": 12
+      "row_count": 1000
+    },
+    {
+      "start_row": 457001,
+      "end_row": 458000,
+      "json": "contrib/fta/VOL00010/epstein_ranked_457001_458000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 458001,
+      "end_row": 459000,
+      "json": "contrib/fta/VOL00010/epstein_ranked_458001_459000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 459001,
+      "end_row": 460000,
+      "json": "contrib/fta/VOL00010/epstein_ranked_459001_460000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 460001,
+      "end_row": 461000,
+      "json": "contrib/fta/VOL00010/epstein_ranked_460001_461000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 461001,
+      "end_row": 462000,
+      "json": "contrib/fta/VOL00010/epstein_ranked_461001_462000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 462001,
+      "end_row": 463000,
+      "json": "contrib/fta/VOL00010/epstein_ranked_462001_463000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 463001,
+      "end_row": 464000,
+      "json": "contrib/fta/VOL00010/epstein_ranked_463001_464000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 464001,
+      "end_row": 465000,
+      "json": "contrib/fta/VOL00010/epstein_ranked_464001_465000.jsonl",
+      "row_count": 609
+    },
+    {
+      "start_row": 465001,
+      "end_row": 466000,
+      "json": "contrib/fta/VOL00010/epstein_ranked_465001_466000.jsonl",
+      "row_count": 1000
+    },
+    {
+      "start_row": 466001,
+      "end_row": 467000,
+      "json": "contrib/fta/VOL00010/epstein_ranked_466001_467000.jsonl",
+      "row_count": 450
     }
   ]
 }
