@@ -1,12 +1,14 @@
 # Data Directory
 
-This directory houses the mutli-modal corpora, legacy datasets, and execution workspaces.
+This directory houses the multi-modal corpora, legacy datasets, and execution workspaces.
+
+Current snapshot status: DOJ FTA VOL00001-VOL00012 has already been processed into ranked outputs (`source/contrib/fta/`). `data/new_data/` remains the raw input store for reprocessing or future source updates.
 
 ## Structure & Organization
 
 ### 1. New Data (`new_data/`)
 The primary holding area for the newly released Epstein volumes.
-- **NATIVES (`new_data/VOL0000X/NATIVES/`)**: Contains the unprocessed, original files (e.g. `.pdf`, `.mp4`, `.m4a`, `.xlsx`, `.csv`). This is the target directory for the standard processing pipelines (`run_ranker.sh`, `run_av_ranker.sh`).
+- **NATIVES (`new_data/VOL0000X/NATIVES/`)**: Contains the raw original files (e.g. `.pdf`, `.mp4`, `.m4a`, `.xlsx`, `.csv`). This is the target directory for the standard processing pipelines (`run_ranker.sh`, `run_av_ranker.sh`).
 - **OCR (`new_data/OCR/VOL0000X/DATA/`)**: Contains the Optical Character Recognition (OCR) text extracts derived from the raw native documents. These are consolidated text files (e.g., `VOL00008.txt`) representing the machine-readable contents of that volume.
 
 ### 2. Legacy Epstein 20K Data

@@ -4,6 +4,12 @@ LLM-powered tooling for triaging Epstein-related document corpora. Processes PDF
 
 **Default model:** [`qwen/qwen3-vl-30b-a3b-thinking`](https://openrouter.ai/qwen/qwen3-vl-30b-a3b-thinking) via OpenRouter (free, hosted by Alibaba). No API costs, no local GPU required.
 
+## Dataset Status (Current Snapshot)
+
+- DOJ FTA volumes `VOL00001`-`VOL00012` are fully processed in this snapshot and exported under `contrib/fta/`.
+- Oversight corpus remains frozen.
+- Run pipelines for corrections, reproducibility, or newly released source files, not for backlog completion.
+
 ## Screenshots
 
 | Table View | Insights & Charts |
