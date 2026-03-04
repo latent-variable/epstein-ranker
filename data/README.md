@@ -25,3 +25,32 @@ You can also point `gpt_ranker.py --input` at a directory tree of `.txt` files (
 
 For independent corpora, prefer workspace mode:
 `--dataset-workspace-root data/workspaces --dataset-tag <name>`
+
+## Moving `new_data` to External Storage (Symlink-Safe)
+
+If you want to free internal disk space without breaking existing scripts/agents that expect `data/new_data`, use the relocation helper:
+
+```bash
+# From repository root (source/)
+scripts/relocate_new_data.sh --external-root /Volumes/T7/Epstine_data --apply
+```
+
+What it does:
+- Copies `data/new_data` to `/Volumes/T7/Epstine_data/new_data` via `rsync`
+- Verifies source/destination match
+- Replaces local `data/new_data` with a symlink to the external path
+- Keeps a local backup (`data/.new_data_internal_backup_<timestamp>`) by default
+
+Optional cleanup after validation:
+
+```bash
+scripts/relocate_new_data.sh --external-root /Volumes/T7/Epstine_data --apply --purge-internal-backup
+```
+
+If the copy is too slow because of millions of small OCR text files, move raw volume folders first and skip OCR:
+
+```bash
+scripts/relocate_new_data.sh --external-root /Volumes/T7/Epstine_data --apply --exclude-ocr --skip-verify
+```
+
+You can migrate OCR later in a separate pass when convenient.

@@ -307,7 +307,7 @@ PY
 }
 
 list_existing_volumes() {
-  find "$DATA_ROOT" -maxdepth 1 -mindepth 1 -type d -name 'VOL*' -print 2>/dev/null \
+  find "$DATA_ROOT" -maxdepth 1 -mindepth 1 \( -type d -o -type l \) -name 'VOL*' -print 2>/dev/null \
     | sed -E 's#.*/VOL0*([0-9]+)$#\1#' \
     | grep -E '^[0-9]+$' \
     | sort -n -u

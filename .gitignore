@@ -27,7 +27,9 @@ data/EPS_FILES_20K_NOV2026.csv
 contrib/*.csv
 
 # dataset 
+data/new_data
 data/new_data/
+data/.new_data_internal_backup_*
 data/dataset_profiles/
 data/workspaces/
 
