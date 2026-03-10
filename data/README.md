@@ -10,6 +10,7 @@ Current snapshot status: DOJ FTA VOL00001-VOL00012 has already been processed in
 The primary holding area for the newly released Epstein volumes.
 - **NATIVES (`new_data/VOL0000X/NATIVES/`)**: Contains the raw original files (e.g. `.pdf`, `.mp4`, `.m4a`, `.xlsx`, `.csv`). This is the target directory for the standard processing pipelines (`run_ranker.sh`, `run_av_ranker.sh`).
 - **OCR (`new_data/OCR/VOL0000X/DATA/`)**: Contains the Optical Character Recognition (OCR) text extracts derived from the raw native documents. These are consolidated text files (e.g., `VOL00008.txt`) representing the machine-readable contents of that volume.
+- **House Oversight Raw (`new_data/house_oversight/`)**: External-drive-backed raw production drops with `TEXT/`, `IMAGES/`, and `DATA/` folders. The `TEXT/` tree powers phrase search and the `IMAGES/` tree is the raw visual layer for House Oversight documents such as `HOUSE_OVERSIGHT_020367`.
 
 ### 2. Legacy Epstein 20K Data
 - **Location**: `EPS_FILES_20K_NOV2026.csv`
