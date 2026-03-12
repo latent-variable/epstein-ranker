@@ -110,7 +110,7 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
                 "alternate_identities": ["Jeffrey Epstein", "Sarah Ferguson"],
                 "visible_people_count_estimate": "2",
                 "setting": "Indoor event",
-                "scene_tags": ["Indoor", "podium", "podium", "!!!"],
+                "scene_tags": ["Indoor", "podium", "Bill Clinton", "jeffrey-epstein", "!!!"],
                 "notes": "Matched hairstyle and face shape.",
             },
             known_alias_map=alias_map,
@@ -129,6 +129,78 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
         self.assertEqual(normalized["visible_people_count_estimate"], 2)
         self.assertEqual(normalized["setting"], "indoor event")
         self.assertEqual(normalized["scene_tags"], ["indoor", "podium"])
+
+    def test_apply_identity_evidence_gate_suppresses_context_only_known_identity(self) -> None:
+        gated = face_vlm_classifier.apply_identity_evidence_gate(
+            {
+                "best_identity": "Les Wexner",
+                "best_identity_label": "les-wexner",
+                "known_reference_label": "les-wexner",
+                "confidence": "high",
+                "match_basis": "scene_context",
+                "alternate_identities": [],
+                "alternate_identity_labels": [],
+                "visible_people_count_estimate": 1,
+                "setting": "outdoor",
+                "scene_tags": ["outdoor"],
+                "notes": "Context only",
+            },
+            shortlist_labels=["donald-trump"],
+        )
+
+        self.assertEqual(gated["best_identity"], "unknown")
+        self.assertEqual(gated["best_identity_label"], "unknown")
+        self.assertEqual(gated["identity_evidence_status"], "suppressed")
+        self.assertEqual(
+            gated["suppressed_identity_candidate"]["reason"],
+            "context_only_identity",
+        )
+
+    def test_apply_identity_evidence_gate_suppresses_medium_face_label_outside_shortlist(self) -> None:
+        gated = face_vlm_classifier.apply_identity_evidence_gate(
+            {
+                "best_identity": "Alan Dershowitz",
+                "best_identity_label": "alan-dershowitz",
+                "known_reference_label": "alan-dershowitz",
+                "confidence": "medium",
+                "match_basis": "face",
+                "alternate_identities": [],
+                "alternate_identity_labels": [],
+                "visible_people_count_estimate": 1,
+                "setting": "outdoor",
+                "scene_tags": ["outdoor"],
+                "notes": "Face only",
+            },
+            shortlist_labels=["donald-trump"],
+        )
+
+        self.assertEqual(gated["best_identity_label"], "unknown")
+        self.assertEqual(gated["identity_evidence_status"], "suppressed")
+        self.assertEqual(
+            gated["suppressed_identity_candidate"]["reason"],
+            "face_identity_not_supported_by_shortlist",
+        )
+
+    def test_apply_identity_evidence_gate_keeps_high_face_label_outside_shortlist(self) -> None:
+        gated = face_vlm_classifier.apply_identity_evidence_gate(
+            {
+                "best_identity": "Bill Clinton",
+                "best_identity_label": "bill-clinton",
+                "known_reference_label": "bill-clinton",
+                "confidence": "high",
+                "match_basis": "face",
+                "alternate_identities": [],
+                "alternate_identity_labels": [],
+                "visible_people_count_estimate": 1,
+                "setting": "indoor",
+                "scene_tags": ["indoor"],
+                "notes": "Strong face match",
+            },
+            shortlist_labels=["jeffrey-epstein"],
+        )
+
+        self.assertEqual(gated["best_identity_label"], "bill-clinton")
+        self.assertEqual(gated["identity_evidence_status"], "accepted")
 
     def test_select_known_identity_hints_caps_global_list_and_prioritizes_relevant_labels(self) -> None:
         identity_registry = face_vlm_classifier.build_identity_registry(
@@ -165,6 +237,20 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
         )
 
         self.assertEqual(counts, {"jeffrey-epstein": 2, "bill-clinton": 1})
+
+    def test_collect_record_known_labels_is_unique_per_image(self) -> None:
+        labels = face_vlm_classifier.collect_record_known_labels(
+            {
+                "faces": [
+                    {"known_reference_label": "jeffrey-epstein", "predicted_label": "jeffrey-epstein"},
+                    {"known_reference_label": "jeffrey-epstein", "predicted_label": "jeffrey-epstein"},
+                    {"known_reference_label": "unknown", "predicted_label": "bill-clinton"},
+                ]
+            },
+            {"jeffrey-epstein", "bill-clinton"},
+        )
+
+        self.assertEqual(labels, {"jeffrey-epstein", "bill-clinton"})
 
     def test_format_known_identity_hints_includes_counts(self) -> None:
         registry = face_vlm_classifier.build_identity_registry(
@@ -216,8 +302,10 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
         self.assertIn("user_instruction_template", contract)
         self.assertIn("best_identity", contract["user_instruction_template"])
         self.assertIn("investigative journalists", contract["system_prompt"])
+        self.assertIn("Do not identify someone based only", contract["system_prompt"])
         self.assertIn("Known people already cataloged", contract["user_instruction_template"])
         self.assertIn("sorted by prior normalized image counts", contract["user_instruction_template"])
+        self.assertIn("never include person names", contract["user_instruction_template"])
         self.assertNotIn("Allowed labels", contract["user_instruction_template"])
         self.assertEqual(
             contract["output_fields"],
