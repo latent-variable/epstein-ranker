@@ -202,6 +202,14 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
         self.assertEqual(payload["labels"]["bill-clinton"]["observed_image_count"], 4)
         self.assertIn("William Jefferson Clinton", payload["labels"]["bill-clinton"]["aliases"])
 
+    def test_resolve_person_catalog_out_path_defaults_next_to_master_catalog(self) -> None:
+        resolved = face_vlm_classifier.resolve_person_catalog_out_path(
+            None,
+            Path("/tmp/master-image-catalog-vlm.json"),
+        )
+
+        self.assertEqual(resolved, Path("/tmp/master-image-catalog-vlm-persons.json"))
+
     def test_build_prompt_contract_exposes_expected_fields(self) -> None:
         contract = face_vlm_classifier.build_prompt_contract()
         self.assertIn("system_prompt", contract)
