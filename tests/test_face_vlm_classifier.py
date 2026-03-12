@@ -111,6 +111,7 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
                 "visible_people_count_estimate": "2",
                 "setting": "Indoor event",
                 "scene_tags": ["Indoor", "podium", "Bill Clinton", "jeffrey-epstein", "!!!"],
+                "editorial_usefulness": "Hero image",
                 "notes": "Matched hairstyle and face shape.",
             },
             known_alias_map=alias_map,
@@ -129,6 +130,7 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
         self.assertEqual(normalized["visible_people_count_estimate"], 2)
         self.assertEqual(normalized["setting"], "indoor event")
         self.assertEqual(normalized["scene_tags"], ["indoor", "podium"])
+        self.assertEqual(normalized["editorial_usefulness"], "very_useful")
 
     def test_apply_identity_evidence_gate_suppresses_context_only_known_identity(self) -> None:
         gated = face_vlm_classifier.apply_identity_evidence_gate(
@@ -266,6 +268,17 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
 
         self.assertEqual(formatted, "Jeffrey Epstein (9), Bill Clinton (2)")
 
+    def test_summarize_editorial_usefulness_uses_best_face_value(self) -> None:
+        usefulness = face_vlm_classifier.summarize_editorial_usefulness(
+            [
+                {"editorial_usefulness": "not_recommended"},
+                {"editorial_usefulness": "supporting image"},
+                {"editorial_usefulness": "very useful"},
+            ]
+        )
+
+        self.assertEqual(usefulness, "very_useful")
+
     def test_build_identity_registry_payload_embeds_counts_and_aliases(self) -> None:
         registry = face_vlm_classifier.build_identity_registry(
             reference_labels=["bill-clinton"],
@@ -306,6 +319,8 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
         self.assertIn("Known people already cataloged", contract["user_instruction_template"])
         self.assertIn("sorted by prior normalized image counts", contract["user_instruction_template"])
         self.assertIn("never include person names", contract["user_instruction_template"])
+        self.assertIn("editorially useful", contract["system_prompt"])
+        self.assertIn("editorial_usefulness", contract["user_instruction_template"])
         self.assertNotIn("Allowed labels", contract["user_instruction_template"])
         self.assertEqual(
             contract["output_fields"],
@@ -317,6 +332,7 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
                 "visible_people_count_estimate",
                 "setting",
                 "scene_tags",
+                "editorial_usefulness",
                 "notes",
             ],
         )
