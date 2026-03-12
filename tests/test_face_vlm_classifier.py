@@ -254,6 +254,29 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
 
         self.assertEqual(labels, {"jeffrey-epstein", "bill-clinton"})
 
+    def test_build_faces_from_stored_analysis_merges_primary_embedding(self) -> None:
+        faces = face_vlm_classifier.build_faces_from_stored_analysis(
+            {
+                "face_analysis": {
+                    "primary_face": {
+                        "x": 10,
+                        "y": 20,
+                        "width": 100,
+                        "height": 90,
+                        "embedding": [0.1, 0.2],
+                    },
+                    "faces": [
+                        {"x": 10, "y": 20, "width": 100, "height": 90},
+                        {"x": 1, "y": 2, "width": 30, "height": 20},
+                    ],
+                }
+            }
+        )
+
+        self.assertEqual(len(faces), 2)
+        self.assertEqual(faces[0]["width"], 100)
+        self.assertEqual(faces[0]["embedding"], [0.1, 0.2])
+
     def test_format_known_identity_hints_includes_counts(self) -> None:
         registry = face_vlm_classifier.build_identity_registry(
             reference_labels=["bill-clinton", "jeffrey-epstein"],
@@ -336,6 +359,53 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
                 "notes",
             ],
         )
+
+    def test_strip_record_bloat_removes_expected_fields(self) -> None:
+        record = {
+            "image_path": "/tmp/test.webp",
+            "volume": "VOL00002",
+            "efta_id": "EFTA00001234",
+            "status": "processed",
+            "people_labels": ["bill-clinton"],
+            "faces": [
+                {
+                    "face_index": 1,
+                    "face_box": {"x": 10, "y": 20, "width": 100, "height": 90},
+                    "crop_box": {"left": 5, "top": 10, "right": 115, "bottom": 120},
+                    "predicted_name": "Bill Clinton",
+                    "predicted_label": "bill-clinton",
+                    "known_reference_label": "bill-clinton",
+                    "confidence": "high",
+                    "match_basis": "face",
+                    "alternate_identities": [],
+                    "alternate_identity_labels": [],
+                    "identity_evidence_status": "accepted",
+                    "suppressed_identity_candidate": None,
+                    "editorial_usefulness": "very_useful",
+                    "notes": "Strong match",
+                    "known_identity_hints": [
+                        {"label": "bill-clinton", "display_name": "Bill Clinton", "observed_image_count": 5},
+                    ],
+                    "shortlist_labels": ["bill-clinton"],
+                    "embedding_scores": {"bill-clinton": 0.85},
+                }
+            ],
+        }
+        cleaned = face_vlm_classifier.strip_record_bloat(record)
+
+        self.assertEqual(len(cleaned["faces"]), 1)
+        face = cleaned["faces"][0]
+        # Bloat fields removed
+        for field in ("face_box", "crop_box", "suppressed_identity_candidate",
+                      "known_identity_hints", "shortlist_labels", "embedding_scores"):
+            self.assertNotIn(field, face, f"{field} should have been stripped")
+        # Useful fields preserved
+        for field in ("face_index", "predicted_name", "predicted_label",
+                      "known_reference_label", "confidence", "match_basis",
+                      "identity_evidence_status", "editorial_usefulness", "notes"):
+            self.assertIn(field, face, f"{field} should have been preserved")
+        # Original record is not mutated
+        self.assertIn("face_box", record["faces"][0])
 
 
 if __name__ == "__main__":
