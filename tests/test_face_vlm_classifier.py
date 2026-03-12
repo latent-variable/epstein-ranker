@@ -14,6 +14,29 @@ SPEC.loader.exec_module(face_vlm_classifier)
 
 
 class FaceVlmClassifierHelpersTest(unittest.TestCase):
+    def test_identity_registry_prefers_curated_display_names_and_aliases(self) -> None:
+        registry = face_vlm_classifier.build_identity_registry(
+            reference_labels=["bill-clinton", "jeffrey-epstein"],
+            person_catalog={
+                "bill-clinton": {
+                    "display_name": "William Jefferson Clinton",
+                    "aliases": ["Bill Clinton", "President Clinton"],
+                }
+            },
+        )
+        alias_map = face_vlm_classifier.build_identity_alias_map(registry)
+        display_name_map = face_vlm_classifier.build_display_name_map(registry)
+
+        canonical_name, canonical_label, known_label = face_vlm_classifier.canonicalize_identity_name(
+            "President Clinton",
+            alias_map,
+            display_name_map,
+        )
+
+        self.assertEqual(canonical_name, "William Jefferson Clinton")
+        self.assertEqual(canonical_label, "bill-clinton")
+        self.assertEqual(known_label, "bill-clinton")
+
     def test_parse_volume_tokens_normalizes_inputs(self) -> None:
         self.assertEqual(
             face_vlm_classifier.parse_volume_tokens("2, VOL00008,vol9"),
@@ -69,27 +92,116 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
         self.assertIn("ghislaine-maxwell", shortlist)
         self.assertGreater(score_map["bill-clinton"], score_map["ghislaine-maxwell"])
 
-    def test_normalize_model_result_filters_unknown_labels(self) -> None:
+    def test_normalize_model_result_preserves_freeform_identity_and_maps_known_labels(self) -> None:
+        registry = face_vlm_classifier.build_identity_registry(
+            reference_labels=["bill-clinton", "jeffrey-epstein"],
+            person_catalog={
+                "bill-clinton": {"display_name": "Bill Clinton", "aliases": ["William Jefferson Clinton"]},
+                "jeffrey-epstein": {"display_name": "Jeffrey Epstein", "aliases": ["Jeff Epstein"]},
+            },
+        )
+        alias_map = face_vlm_classifier.build_identity_alias_map(registry)
+        display_name_map = face_vlm_classifier.build_display_name_map(registry)
         normalized = face_vlm_classifier.normalize_model_result(
             {
-                "best_identity": "bill-clinton",
+                "best_identity": "Bill Clinton",
                 "confidence": 0.91,
                 "match_basis": "Facial features and visible passport text both align.",
-                "alternate_identities": ["jeffrey-epstein", "not-allowed"],
+                "alternate_identities": ["Jeffrey Epstein", "Sarah Ferguson"],
                 "visible_people_count_estimate": "2",
                 "setting": "Indoor event",
                 "scene_tags": ["Indoor", "podium", "podium", "!!!"],
                 "notes": "Matched hairstyle and face shape.",
             },
-            ["bill-clinton", "jeffrey-epstein"],
+            known_alias_map=alias_map,
+            display_name_map=display_name_map,
         )
 
-        self.assertEqual(normalized["best_identity"], "bill-clinton")
+        self.assertEqual(normalized["best_identity"], "Bill Clinton")
+        self.assertEqual(normalized["best_identity_label"], "bill-clinton")
+        self.assertEqual(normalized["known_reference_label"], "bill-clinton")
         self.assertEqual(normalized["confidence"], "high")
-        self.assertEqual(normalized["alternate_identities"], ["jeffrey-epstein"])
+        self.assertEqual(normalized["alternate_identities"], ["Jeffrey Epstein", "Sarah Ferguson"])
+        self.assertEqual(
+            normalized["alternate_identity_labels"],
+            ["jeffrey-epstein", "sarah-ferguson"],
+        )
         self.assertEqual(normalized["visible_people_count_estimate"], 2)
         self.assertEqual(normalized["setting"], "indoor event")
         self.assertEqual(normalized["scene_tags"], ["indoor", "podium"])
+
+    def test_select_known_identity_hints_caps_global_list_and_prioritizes_relevant_labels(self) -> None:
+        identity_registry = face_vlm_classifier.build_identity_registry(
+            reference_labels=["bill-clinton", "jeffrey-epstein", "ghislaine-maxwell", "prince-andrew"],
+            person_catalog={},
+        )
+        hints = face_vlm_classifier.select_known_identity_hints(
+            identity_registry=identity_registry,
+            shortlist_labels=["prince-andrew"],
+            mention_counts={"bill-clinton": 3},
+            observed_identity_counts={"jeffrey-epstein": 12},
+            limit=2,
+        )
+
+        self.assertEqual(hints, ["jeffrey-epstein", "prince-andrew"])
+
+    def test_build_observed_identity_counts_counts_unique_images(self) -> None:
+        counts = face_vlm_classifier.build_observed_identity_counts(
+            [
+                {
+                    "faces": [
+                        {"known_reference_label": "jeffrey-epstein", "predicted_label": "jeffrey-epstein"},
+                        {"known_reference_label": "jeffrey-epstein", "predicted_label": "jeffrey-epstein"},
+                        {"known_reference_label": "bill-clinton", "predicted_label": "bill-clinton"},
+                    ]
+                },
+                {
+                    "faces": [
+                        {"known_reference_label": "jeffrey-epstein", "predicted_label": "jeffrey-epstein"},
+                    ]
+                },
+            ],
+            {"jeffrey-epstein", "bill-clinton"},
+        )
+
+        self.assertEqual(counts, {"jeffrey-epstein": 2, "bill-clinton": 1})
+
+    def test_format_known_identity_hints_includes_counts(self) -> None:
+        registry = face_vlm_classifier.build_identity_registry(
+            reference_labels=["bill-clinton", "jeffrey-epstein"],
+            person_catalog={},
+        )
+        display_name_map = face_vlm_classifier.build_display_name_map(registry)
+        formatted = face_vlm_classifier.format_known_identity_hints(
+            ["jeffrey-epstein", "bill-clinton"],
+            display_name_map,
+            {"jeffrey-epstein": 9, "bill-clinton": 2},
+        )
+
+        self.assertEqual(formatted, "Jeffrey Epstein (9), Bill Clinton (2)")
+
+    def test_build_prompt_contract_exposes_expected_fields(self) -> None:
+        contract = face_vlm_classifier.build_prompt_contract()
+        self.assertIn("system_prompt", contract)
+        self.assertIn("user_instruction_template", contract)
+        self.assertIn("best_identity", contract["user_instruction_template"])
+        self.assertIn("investigative journalists", contract["system_prompt"])
+        self.assertIn("Known people already cataloged", contract["user_instruction_template"])
+        self.assertIn("sorted by prior normalized image counts", contract["user_instruction_template"])
+        self.assertNotIn("Allowed labels", contract["user_instruction_template"])
+        self.assertEqual(
+            contract["output_fields"],
+            [
+                "best_identity",
+                "confidence",
+                "match_basis",
+                "alternate_identities",
+                "visible_people_count_estimate",
+                "setting",
+                "scene_tags",
+                "notes",
+            ],
+        )
 
 
 if __name__ == "__main__":
