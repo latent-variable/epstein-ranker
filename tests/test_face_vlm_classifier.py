@@ -180,6 +180,28 @@ class FaceVlmClassifierHelpersTest(unittest.TestCase):
 
         self.assertEqual(formatted, "Jeffrey Epstein (9), Bill Clinton (2)")
 
+    def test_build_identity_registry_payload_embeds_counts_and_aliases(self) -> None:
+        registry = face_vlm_classifier.build_identity_registry(
+            reference_labels=["bill-clinton"],
+            person_catalog={
+                "bill-clinton": {
+                    "display_name": "Bill Clinton",
+                    "aliases": ["William Jefferson Clinton", "Bill Clinton"],
+                }
+            },
+        )
+        payload = face_vlm_classifier.build_identity_registry_payload(
+            identity_registry=registry,
+            observed_identity_counts={"bill-clinton": 4},
+            person_catalog_path=Path("/tmp/person-catalog.json"),
+            known_identity_hint_limit=30,
+        )
+
+        self.assertEqual(payload["known_identity_hint_limit"], 30)
+        self.assertEqual(payload["ranked_labels_by_observed_image_count"], ["bill-clinton"])
+        self.assertEqual(payload["labels"]["bill-clinton"]["observed_image_count"], 4)
+        self.assertIn("William Jefferson Clinton", payload["labels"]["bill-clinton"]["aliases"])
+
     def test_build_prompt_contract_exposes_expected_fields(self) -> None:
         contract = face_vlm_classifier.build_prompt_contract()
         self.assertIn("system_prompt", contract)
