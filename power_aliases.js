@@ -89,7 +89,10 @@ export const POWER_ALIASES = {
     "secretary hillary clinton",
     "secretary of state hillary clinton",
     "secretary of state clinton",
-    "Secretary of State Hillary Clinton"
+    "Secretary of State Hillary Clinton",
+    "Hillary Rodham Clinton",
+    "Secretary of State Clinton",
+    "Secretary Hillary Clinton"
   ],
   "Barack Obama": [
     "barack obama",
@@ -177,7 +180,10 @@ export const POWER_ALIASES = {
   ],
   "Virginia Giuffre": [
     "virginia giuffre",
-    "virginia roberts"
+    "virginia roberts",
+    "Virginia Roberts",
+    "virginia roberts giuffre",
+    "Virginia Roberts Giuffre"
   ],
   "Alan Greenspan": [
     "alan greenspan"
@@ -266,19 +272,18 @@ export const POWER_ALIASES = {
     "bradley edwards",
     "brad edwards",
     "bradley j. edwards, esq.",
+    "bradley j. edwards",
     "Brad Edwards",
     "BRAD EDWARDS",
-    "Bradley J. Edwards, Esq."
+    "Bradley J. Edwards, Esq.",
+    "Bradley J. Edwards",
+    "Bradley J Edwards"
   ],
   "Brad Karp": [
     "brad karp"
   ],
   "Brad Wechsler": [
     "brad wechsler"
-  ],
-  "Bradley J. Edwards": [
-    "bradley j. edwards",
-    "Bradley J Edwards"
   ],
   "Charlie Rose": [
     "charlie rose"
@@ -414,9 +419,6 @@ export const POWER_ALIASES = {
   ],
   "Harvey Weinstein": [
     "harvey weinstein"
-  ],
-  "Hillary Rodham Clinton": [
-    "hillary rodham clinton"
   ],
   "Hope Hicks": [
     "hope hicks"
@@ -732,9 +734,6 @@ export const POWER_ALIASES = {
   "Prince Charles": [
     "prince charles"
   ],
-  "Qatar (state)": [
-    "qatar"
-  ],
   "Rahm Emanuel": [
     "rahm emanuel"
   ],
@@ -774,11 +773,12 @@ export const POWER_ALIASES = {
     "president ronald reagan",
     "President Ronald Reagan"
   ],
-  "Rouhani": [
-    "iranian leadership",
-    "iranian government",
-    "Iranian leadership",
-    "Iranian government"
+  "Hassan Rouhani": [
+    "rouhani",
+    "hassan rouhani",
+    "president rouhani",
+    "Rouhani",
+    "President Rouhani"
   ],
   "Roy Black": [
     "roy black",
@@ -806,10 +806,8 @@ export const POWER_ALIASES = {
   ],
   "Saudi royal family": [
     "saudi royal family",
-    "kingdom of saudi arabia",
     "Saudi Royal Family",
-    "Saudi Royal family",
-    "Kingdom of Saudi Arabia"
+    "Saudi Royal family"
   ],
   "Scott Rothstein": [
     "scott rothstein",
@@ -859,7 +857,11 @@ export const POWER_ALIASES = {
     "thomas j. barrack",
     "Thomas J. Barrack Jr.",
     "Thomas J. Barrack, Jr.",
-    "Thomas J. Barrack"
+    "Thomas J. Barrack",
+    "Tom Barrack",
+    "Tom barrack",
+    "TOM barrack",
+    "TOM Barrack"
   ],
   "Thomas Pritzker": [
     "tom pritzker",
@@ -872,12 +874,6 @@ export const POWER_ALIASES = {
   ],
   "Timothy Geithner": [
     "timothy geithner"
-  ],
-  "Tom Barrack": [
-    "tom barrack",
-    "Tom barrack",
-    "TOM barrack",
-    "TOM Barrack"
   ],
   "Tom Menino": [
     "tom menino"
@@ -900,9 +896,6 @@ export const POWER_ALIASES = {
     "President Vladimir Putin",
     "Putin"
   ],
-  "Virginia Roberts": [
-    "virginia roberts"
-  ],
   "Woody Allen": [
     "woody allen"
   ],
@@ -922,12 +915,6 @@ export const POWER_ALIASES = {
   ],
   "Yossi Beilin": [
     "yossi beilin"
-  ],
-  "Zhang": [
-    "chinese government",
-    "chinese communist party",
-    "Chinese government",
-    "Chinese Communist Party"
   ],
   "FBI": [
     "fbi",
@@ -974,7 +961,10 @@ export const POWER_ALIASES = {
   ],
   "Iran": [
     "iran",
-    "iranian government"
+    "iranian government",
+    "Iranian government",
+    "iranian leadership",
+    "Iranian leadership"
   ],
   "Saudi Arabia": [
     "saudi arabia",
@@ -1052,10 +1042,6 @@ export const POWER_ALIASES = {
     "House Oversight Committee",
     "Congress"
   ],
-  "Palm Beach Police": [
-    "palm beach police department",
-    "palm beach police"
-  ],
   "U.S. Attorney's Office": [
     "u.s. attorney's office",
     "u.s. attorney’s office",
@@ -1065,9 +1051,6 @@ export const POWER_ALIASES = {
   ],
   "U.S. Supreme Court": [
     "u.s. supreme court"
-  ],
-  "U.S. Treasury": [
-    "u.s. treasury department"
   ],
   "U.S. Securities and Exchange Commission": [
     "u.s. securities and exchange commission",
@@ -1127,7 +1110,10 @@ export const POWER_ALIASES = {
     "uae"
   ],
   "Qatar": [
-    "qatar"
+    "qatar",
+    "Qatar",
+    "qatari government",
+    "Qatari government"
   ],
   "Biden Administration": [
     "biden administration",
