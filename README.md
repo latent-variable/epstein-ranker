@@ -1,4 +1,4 @@
-# Epstein Ranker
+# DOJ-FTA Oversight Ranker
 
 LLM-powered tooling for triaging Epstein-related document corpora. Processes PDFs, office documents, and audio/video files through vision-language models, scoring each for investigative significance. Ships a dashboard for filtering, charting, and inspecting scored documents.
 
